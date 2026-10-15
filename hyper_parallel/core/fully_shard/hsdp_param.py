@@ -1119,21 +1119,21 @@ class HSDPParamV2:
                           enabling zero-copy fusion with subsequent all_reduce operations.
                           The buffer must have ``padded_sharded_param_size.numel()`` elements
                           and the reduction dtype.
-
-        The output and optional asynchronous work are stored in
-        ``reduce_scatter_comm_ctx``.
         """
         if self.unsharded_accumulated_grad is not None:
-            grad = self.unsharded_accumulated_grad_data
+            self._grad = self.unsharded_accumulated_grad_data
+            self.unsharded_accumulated_grad = None
         else:
-            grad = self.unsharded_grad_data
-        self._grad = grad.to(self.reduce_comm_dtype(grad))
+            self._grad = self.unsharded_grad_data
+            self.unsharded_param.grad = None
+        self._grad = self._grad.to(self.reduce_comm_dtype(self._grad))
         shard_dim = self.hsdp_placement.dim
         if self.shard_world_size <= 1:
             self._grad = self._grad.view(-1)
         elif shard_dim != 0:
             grad_chunks = torch.chunk(self._grad, self.shard_world_size, dim=shard_dim)
             self._grad = torch.cat(grad_chunks, dim=0).contiguous().view(-1)
+            grad_chunks = None
         else:
             padded_unsharded_dim0 = self.padded_sharded_param_size[0] * self.shard_world_size
             if self._grad.size(0) != padded_unsharded_dim0:
@@ -1152,6 +1152,7 @@ class HSDPParamV2:
             else:
                 self.reduce_scatter_comm_ctx.reduce_scatter_output = self._grad
             self.reduce_scatter_comm_ctx.reduce_scatter_handle = None
+            self._grad = None
             return
 
         # Calculate output size
@@ -1181,6 +1182,8 @@ class HSDPParamV2:
             group=shard_process_group,
             async_op=async_op,
         )
+        if not async_op:
+            self._grad = None
 
     def all_reduce_grad(
         self,
