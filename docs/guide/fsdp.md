@@ -20,6 +20,8 @@ HyperParallel 提供 `fully_shard` 接口实现 FSDP（Fully Sharded Data Parall
 
 切分入口为 `fully_shard`，将模块应用 FSDP/HSDP 切分，原地改写并返回。混合精度与 offload 行为通过策略类（`MixedPrecisionPolicy`、`OffloadPolicy` / `CPUOffloadPolicy`）作为参数传入。切分后优化器状态会自动随参数切分，无需额外配置。
 
+`MixedPrecisionPolicy.grad_dtype_fn` 可按原始参数选择展开后叶子参数的梯度 dtype；返回 `None` 时保留默认行为。此功能需要支持 `Tensor.grad_dtype` 的 PyTorch。要消除转换开销，反向算子还须能直接输出所选 dtype；设置该字段本身不改变算子的累加精度或输出能力。
+
 ```python
 fully_shard(
     module,                       # 要切分的模块，或模块列表（列表内合并为一个切分单元）

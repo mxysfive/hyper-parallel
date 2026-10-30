@@ -163,6 +163,34 @@ class TestHSDPParamV2(unittest.TestCase):
         param_v2.unsharded_param_buffers = [MagicMock()]
         param_v2.sharded_state = ShardedState.UNSHARDED
 
+    def test_unsharded_grad_dtype_is_selected_per_parameter_and_stable(self):
+        """A selected BF16 leaf keeps FP32 gradients across unshard cycles."""
+        if not hasattr(torch.nn.Parameter(torch.zeros(1)), "grad_dtype"):
+            self.skipTest("PyTorch does not support Tensor.grad_dtype")
+        for requested_dtype in (None, torch.float32):
+            param_v2 = object.__new__(HSDPParamV2)
+            param_v2.unsharded_param_buffers = [torch.ones(4, dtype=torch.bfloat16)]
+            param_v2.allgather_comm_ctx = MagicMock(allgather_output=None)
+            param_v2._orig_size = (2, 2)
+            param_v2._contiguous_orig_stride = (2, 1)
+            param_v2.source_shard_info = None
+            param_v2.sharded_param = torch.nn.Parameter(torch.ones(2, 2))
+            param_v2._unsharded_grad_dtype = requested_dtype
+            param_v2.init_unsharded_param()
+            leaf = param_v2._unsharded_param
+            self.assertEqual(leaf.dtype, torch.bfloat16)
+            self.assertEqual(leaf.grad_dtype, requested_dtype or torch.bfloat16)
+            param_v2.init_unsharded_param()
+            self.assertIs(leaf, param_v2._unsharded_param)
+
+    @patch.object(DTensor, "from_local")
+    def test_grad_dtype_policy_selects_original_parameter(self, mock_dtensor_from_local):
+        """The selector receives the original parameter before it is sharded."""
+        self._create_mock_dtensor(mock_dtensor_from_local, self.sharded_param_data)
+        self.mp_policy.grad_dtype_fn = lambda param: torch.float32 if param is self.param else None
+        param_v2 = self._create_param_v2()
+        self.assertEqual(param_v2._unsharded_grad_dtype, torch.float32)
+
     @patch.object(DTensor, "from_local")
     def test_init_sharded_param(self, mock_dtensor_from_local):
         """Test parameter sharding initialization.

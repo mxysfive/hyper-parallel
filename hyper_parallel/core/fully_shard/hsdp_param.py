@@ -164,6 +164,11 @@ class HSDPParamV2:
         self._module_info: ParamModuleInfo = module_info
         self.mesh_info = mesh_info
         self.mp_policy = mp_policy
+        grad_dtype_fn = mp_policy.grad_dtype_fn if mp_policy is not None else None
+        self._unsharded_grad_dtype = grad_dtype_fn(param) if grad_dtype_fn is not None else None
+        if (self._unsharded_grad_dtype is not None and
+                not isinstance(self._unsharded_grad_dtype, torch.dtype)):
+            raise TypeError("grad_dtype_fn must return a torch.dtype or None")
         self.device = device
         self.orig_dtype = None
         self.param_dtype = None
@@ -757,6 +762,10 @@ class HSDPParamV2:
             unsharded_param,
             requires_grad=self.sharded_param.requires_grad,
         )
+        if self._unsharded_grad_dtype is not None and self._unsharded_param.requires_grad:
+            if not hasattr(self._unsharded_param, "grad_dtype"):
+                raise RuntimeError("Setting the unsharded gradient dtype requires PyTorch Tensor.grad_dtype")
+            self._unsharded_param.grad_dtype = self._unsharded_grad_dtype
 
     def to_sharded(self) -> None:
         """Install the sharded parameter on managed modules and update state."""

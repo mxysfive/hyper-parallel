@@ -256,12 +256,17 @@ class MixedPrecisionPolicy:
         param_dtype: Data type for parameter computation. If None, uses original dtype.
         reduce_dtype: Data type for gradient reduction. If None, uses param_dtype.
         output_dtype: Data type for module outputs. If None, no casting applied.
+        grad_dtype_fn: Optional callback evaluated once per original parameter before
+            sharding. Return the gradient dtype for its unsharded leaf, or None to
+            keep PyTorch's default. Operators must support the requested dtype to
+            avoid an additional conversion in autograd.
     """
     param_dtype: Optional[DType] = None
     reduce_dtype: Optional[DType] = None
     output_dtype: Optional[DType] = None
     cast_forward_inputs: bool = True
     apply_grad_on_fp32_main_grad: bool = False
+    grad_dtype_fn: Optional[Callable[[nn.Parameter], Optional[DType]]] = None
 
 
 @dataclass
