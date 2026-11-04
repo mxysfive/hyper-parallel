@@ -487,7 +487,9 @@ class HSDPStateV2:
         When the current micro-step disables all-reduce, outputs accumulate in
         ``reduce_partial_output`` without being cast or applied to the parameter.
         On the final synchronized micro-step, the partial result is merged into
-        the current RS output and retained for root-hook finalization.
+        the current RS output. For plain FSDP without source-layout reductions
+        or CPU offload, apply that result as soon as the RS completes; other
+        cases retain it for root-hook finalization.
 
         Args:
             hsdp_params: Parameters whose reduce-scatter work should be waited.
@@ -514,6 +516,18 @@ class HSDPStateV2:
             elif hsdp_param.reduce_partial_output is not None:
                 reduced_grad.add_(hsdp_param.reduce_partial_output)
                 hsdp_param.reduce_partial_output = None
+
+            if (
+                self.requires_all_reduce
+                and hsdp_param.replicate_world_size == 1
+                and hsdp_param.source_shard_info is None
+                and not hsdp_param.offload_to_cpu
+            ):
+                # The async RS was waited above. No other collective or CPU
+                # offload is needed, so release this output after accumulating
+                # it rather than keeping it alive until the root hook.
+                hsdp_param.apply_reduced_grad(reduced_grad)
+                hsdp_param.clear_reduce_scatter_output()
 
             if hsdp_param.unsharded_accumulated_grad_data is not None:
                 hsdp_param.unsharded_accumulated_grad = None

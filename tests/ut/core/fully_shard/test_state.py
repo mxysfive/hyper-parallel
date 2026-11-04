@@ -17,7 +17,6 @@
 Covers _to_dtype_if_needed from hyper_parallel.core.fully_shard.hsdp_state:
 dtype no-op vs cast, and invalid input handling. All tests run on CPU.
 """
-import os
 import unittest
 from types import SimpleNamespace
 from typing import Optional
@@ -34,6 +33,7 @@ from hyper_parallel.core.fully_shard.utils import CPUOffloadPolicy, DDPMeshInfo,
 from hyper_parallel.core.fully_shard.api import HSDPModule, _extend_module_with_hsdp_interface
 from hyper_parallel.core.fully_shard import hsdp_state as state_mod
 from hyper_parallel.core.fully_shard.param_group import AllReduceParamGroup
+from hyper_parallel.core.fully_shard.hsdp_param import HSDPParamV2
 from hyper_parallel.core.fully_shard.hsdp_state import HSDPStateV2, _to_dtype_if_needed
 
 
@@ -70,6 +70,8 @@ class _FakeHSDPParam:
         self.shard_world_size = shard_size
         self.dp_size = dp_size
         self.replicate_world_size = dp_size
+        self.source_shard_info = None
+        self.offload_to_cpu = False
         self.is_replicate_param = shard_size == 1
         mesh_info_type = DDPMeshInfo if self.is_replicate_param else HSDPMeshInfo
         self.mesh_info = object.__new__(mesh_info_type)
@@ -417,8 +419,8 @@ class TestHSDPStateV2(unittest.TestCase):
         torch.testing.assert_close(param.sharded_param.grad, sharded_grad)
         param.apply_reduced_grad.assert_not_called()
 
-    def test_final_size_one_mesh_merges_partial_and_applies_once_at_root(self):
-        """Both (1,) and (1, 1) meshes should finalize through the same local path."""
+    def test_final_size_one_mesh_merges_partial_and_applies_when_rs_completes(self):
+        """A synchronized local result is applied before the root hook."""
         for mesh_shape in ((1,), (1, 1)):
             with self.subTest(mesh_shape=mesh_shape):
                 current_output = torch.tensor([3.0, 4.0], dtype=torch.float32)
@@ -432,17 +434,69 @@ class TestHSDPStateV2(unittest.TestCase):
 
                 self.assertIsNone(param.reduce_partial_output)
                 torch.testing.assert_close(current_output, torch.tensor([4.0, 6.0]))
-                param.apply_reduced_grad.assert_not_called()
+                param.apply_reduced_grad.assert_called_once_with(current_output)
+                self.assertIsNone(param.reduce_scatter_comm_ctx.reduce_scatter_output)
 
                 scheduler = _new_root_scheduler(state)
                 scheduler._finalize_comm_fusion_reductions()
                 scheduler.launch_tp_replicate_reduce_and_apply()
 
-                param.all_reduce_source_replicate_grad_inplace.assert_called_once_with(
-                    current_output,
-                    torch.distributed.ReduceOp.AVG,
-                )
+                param.all_reduce_source_replicate_grad_inplace.assert_not_called()
                 param.apply_reduced_grad.assert_called_once_with(current_output)
+
+    def test_rs_outputs_accumulate_before_root_for_four_microsteps(self):
+        """Use real gradient application to cover dtype and main-grad accumulation."""
+        for main_grad in (False, True):
+            for orig_dtype in (torch.float32, torch.bfloat16):
+                with self.subTest(main_grad=main_grad, orig_dtype=orig_dtype):
+                    param = _FakeHSDPParam(dp_size=1)
+                    param.orig_dtype = orig_dtype
+                    param.mp_policy = SimpleNamespace(apply_grad_on_fp32_main_grad=main_grad)
+                    param.to_sharded_dtensor = lambda grad: SimpleNamespace(_local_tensor=grad)
+                    param.apply_reduced_grad.side_effect = (
+                        lambda grad: HSDPParamV2.apply_reduced_grad(param, grad)
+                    )
+                    param.reduce_scatter_output.side_effect = (
+                        lambda: param.reduce_scatter_comm_ctx.reduce_scatter_output
+                    )
+                    state = _new_state([param])
+                    scheduler = _new_root_scheduler(state)
+                    for micro in range(1, 5):
+                        output = torch.tensor([micro, 2 * micro], dtype=torch.float32)
+                        param.reduce_scatter_comm_ctx.reduce_scatter_output = output
+                        state._wait_prev_reduce_scatter_without_all_reduce([param])
+                        result = param.sharded_param.main_grad if main_grad else param.sharded_param.grad
+                        expected_dtype = torch.float32 if main_grad else orig_dtype
+                        torch.testing.assert_close(
+                            result._local_tensor,
+                            torch.tensor([sum(range(1, micro + 1)), micro * (micro + 1)],
+                                         dtype=expected_dtype),
+                        )
+                        self.assertIsNone(param.reduce_scatter_comm_ctx.reduce_scatter_output)
+                        scheduler.launch_tp_replicate_reduce_and_apply()
+                        self.assertEqual(param.apply_reduced_grad.call_count, micro)
+
+    def test_rs_outputs_requiring_other_work_remain_for_root(self):
+        """Keep HSDP, source-layout reductions and CPU offload on the root path."""
+        for fallback in ("replica", "source_layout", "cpu_offload"):
+            with self.subTest(fallback=fallback):
+                param = _FakeHSDPParam(dp_size=1)
+                if fallback == "replica":
+                    param.replicate_world_size = 2
+                elif fallback == "source_layout":
+                    param.source_shard_info = object()
+                else:
+                    param.offload_to_cpu = True
+                output = torch.tensor([3.0, 4.0])
+                param.reduce_scatter_output.return_value = output
+                param.reduce_scatter_comm_ctx.reduce_scatter_output = output
+                state = _new_state([param])
+                state._wait_prev_reduce_scatter_without_all_reduce([param])
+                param.apply_reduced_grad.assert_not_called()
+                self.assertIs(param.reduce_scatter_comm_ctx.reduce_scatter_output, output)
+                scheduler = _new_root_scheduler(state)
+                scheduler.launch_tp_replicate_reduce_and_apply()
+                param.apply_reduced_grad.assert_called_once_with(output)
 
     def test_all_reduce_group_consumes_partial_output_in_reduce_dtype(self):
         """The final HSDP AR buffer should consume partial RS output, not parameter grad."""
@@ -483,6 +537,7 @@ class TestHSDPStateV2(unittest.TestCase):
         state = _new_state([param])
 
         state._wait_prev_reduce_scatter_without_all_reduce([param])
+        torch.testing.assert_close(param.sharded_param.grad, torch.tensor([14.0, 16.0]))
         scheduler = _new_root_scheduler(state)
         for _ in range(2):
             scheduler._finalize_comm_fusion_reductions()
@@ -784,6 +839,7 @@ class TestHSDPStateV2(unittest.TestCase):
         reduce_scatter_work = MagicMock()
         communication_events = []
         fsdp_param = _FakeHSDPParam(dp_size=1, unsharded_grad=source_grad)
+        fsdp_param.source_shard_info = object()
         fsdp_param.mesh_info = object.__new__(FSDPMeshInfo)
 
         def issue_reduce_scatter(**unused_options: object) -> None:
@@ -1047,6 +1103,7 @@ class TestHSDPStateV2(unittest.TestCase):
         handle = MagicMock()
         events = []
         param = _FakeHSDPParam(dp_size=1)
+        param.source_shard_info = object()
         param.mesh_info = object.__new__(FSDPMeshInfo)
         param._grad = source_grad
         param.reduce_scatter_comm_ctx.reduce_scatter_output = reduced_grad
