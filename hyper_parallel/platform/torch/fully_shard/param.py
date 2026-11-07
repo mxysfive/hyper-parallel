@@ -147,6 +147,7 @@ class TorchHSDPParamV2(HSDPParamV2):
             ValueError: If ``source_shard_info.origin_is_dtensor`` disagrees with whether
                 ``param`` is a native DTensor.
         """
+        self._src_parameter_id = id(param)
         self._module_info: ParamModuleInfo = module_info
         self.mesh_info = mesh_info
         self.mp_policy = mp_policy
@@ -650,7 +651,9 @@ class TorchHSDPParamV2(HSDPParamV2):
 
     def init_dtype_attrs(self, mp_policy: MixedPrecisionPolicy) -> None:
         """Initialize param_dtype and reduce_dtype from the mixed precision policy."""
-        param_dtype, reduce_dtype = (mp_policy.param_dtype, mp_policy.reduce_dtype)
+        custom_dtypes = (mp_policy.custom_params or {}).get(self._src_parameter_id, {})
+        param_dtype = custom_dtypes.get("param_dtype", mp_policy.param_dtype)
+        reduce_dtype = custom_dtypes.get("reduce_dtype", mp_policy.reduce_dtype)
         self.orig_dtype = self.sharded_param.dtype
         if reduce_dtype == param_dtype:
             reduce_dtype = None

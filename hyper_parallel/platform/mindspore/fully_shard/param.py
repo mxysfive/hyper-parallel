@@ -270,6 +270,7 @@ class MindSporeHSDPParamV2(HSDPParamV2):
         device: Optional[str] = None,
         source_shard_info: Optional[SourceShardMetaInfo] = None,
     ):
+        self._src_parameter_id = id(param)
         self._module_info: ParamModuleInfo = module_info
         self.mesh_info = mesh_info
         self.mp_policy = mp_policy
@@ -651,7 +652,9 @@ class MindSporeHSDPParamV2(HSDPParamV2):
         self.param_dtype = None
 
     def init_dtype_attrs(self, mp_policy: MixedPrecisionPolicy):
-        param_dtype, reduce_dtype = (mp_policy.param_dtype, mp_policy.reduce_dtype)
+        custom_dtypes = (mp_policy.custom_params or {}).get(self._src_parameter_id, {})
+        param_dtype = custom_dtypes.get("param_dtype", mp_policy.param_dtype)
+        reduce_dtype = custom_dtypes.get("reduce_dtype", mp_policy.reduce_dtype)
         self.orig_dtype = self.sharded_param.dtype
         if reduce_dtype == param_dtype:
             reduce_dtype = None

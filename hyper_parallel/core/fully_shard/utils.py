@@ -13,6 +13,7 @@
 # limitations under the License.
 # ============================================================================
 """Common policy and mesh metadata for fully_shard APIs."""
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Optional
 
@@ -36,12 +37,37 @@ class MixedPrecisionPolicy:
         param_dtype: Data type for parameter computation. If None, uses original dtype.
         reduce_dtype: Data type for gradient reduction. If None, uses param_dtype.
         output_dtype: Data type for module outputs. If None, no casting applied.
+        custom_params: Original Parameters mapped to param_dtype/reduce_dtype overrides.
+            Missing fields inherit the global policy. Explicit None preserves
+            the parameter dtype or uses the gradient dtype for reduction.
+            Overrides are copied and keyed by source identity without retaining parameters.
     """
     param_dtype: Optional[DType] = None
     reduce_dtype: Optional[DType] = None
     output_dtype: Optional[DType] = None
     cast_forward_inputs: bool = True
     apply_grad_on_fp32_main_grad: bool = False
+    custom_params: Optional[Mapping[platform.Parameter, Mapping[str, Optional[DType]]]] = None
+
+    def __post_init__(self) -> None:
+        """Validate and copy per-parameter overrides before parameters are replaced."""
+        if self.custom_params is None:
+            return
+        if not isinstance(self.custom_params, Mapping):
+            raise ValueError("custom_params must map Parameter objects to dtype dictionaries")
+        overrides = {}
+        for parameter, custom_dtypes in self.custom_params.items():
+            if not isinstance(parameter, platform.Parameter):
+                raise ValueError("custom_params keys must be Parameter objects")
+            if not isinstance(custom_dtypes, Mapping):
+                raise ValueError("custom_params values must be dtype dictionaries")
+            if set(custom_dtypes) - {"param_dtype", "reduce_dtype"}:
+                raise ValueError("custom_params only supports param_dtype and reduce_dtype overrides")
+            for dtype_name, dtype in custom_dtypes.items():
+                if dtype is not None and not isinstance(dtype, DType):
+                    raise ValueError(f"custom_params {dtype_name} must be a backend dtype or None, got {dtype!r}")
+            overrides[id(parameter)] = dict(custom_dtypes)
+        self.custom_params = overrides
 
 
 @dataclass
