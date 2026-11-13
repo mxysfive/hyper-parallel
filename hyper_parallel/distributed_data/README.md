@@ -56,6 +56,16 @@ global constructor group. New data groups do not modify model/FSDP groups.
 explicit accelerator device, H2D and model tensor broadcasts use that device.
 Select the current NPU before constructing the loader on every rank.
 
+Pass `batch_to_device_fn(pinned_batch, device)` to keep application metadata on
+CPU while prefetching model tensors. HP invokes it on its independent copy
+stream after pinning; use nonblocking copies on that stream and return a
+tensor/container tree. HP records completion and waits on the consumer stream.
+Without this callback, all tensors move to the selected accelerator. CPU output
+does not invoke it. Dynamic external broadcasts preserve each returned tensor's
+CPU/device placement; a native `model_batch_spec` must match the returned tree.
+Checkpoints retain the original Host batch and apply the callback again on
+resume, so keep its semantics consistent across ranks and resumed runs.
+
 ## Existing loaders and HY
 
 Use `external_step_source` to preserve the application's existing tokenizer,

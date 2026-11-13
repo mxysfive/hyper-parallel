@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import torch  # pylint: disable=forbidden-backend-import
@@ -134,16 +134,20 @@ class DevicePrefetchedStep:
 class DeviceStepPrefetcher:
     """Separate Host pinning from caller-owned asynchronous device copies."""
 
-    def __init__(self, device: Any) -> None:
+    def __init__(self, device: Any, batch_to_device_fn: Callable[[Any, torch.device], Any] | None = None) -> None:
         """Configure final input transfer without allocating a device stream.
 
         Args:
             device: Target CUDA or NPU device, independent of payload transport.
+            batch_to_device_fn: Optional nonblocking transfer callback run on the copy stream.
         """
+        if batch_to_device_fn is not None and not callable(batch_to_device_fn):
+            raise TypeError("batch_to_device_fn must be callable or None.")
         self.device = torch.device(device)
         if self.device.type not in ("cuda", "npu"):
             raise ValueError("DeviceStepPrefetcher requires a CUDA or NPU device.")
         self._device_module = _get_device_module(self.device)
+        self._batch_to_device = _move_to_device if batch_to_device_fn is None else batch_to_device_fn
         self._copy_stream = None
         self._pending_staging: list[tuple[Any, Any]] = []
 
@@ -196,7 +200,7 @@ class DeviceStepPrefetcher:
         self._pending_staging = [(event, batch) for event, batch in self._pending_staging if not event.query()]
         try:
             with device_module.stream(self._copy_stream):
-                device_batch = _move_to_device(staging, self.device)
+                device_batch = self._batch_to_device(staging, self.device)
                 ready_event = device_module.Event()
                 ready_event.record(self._copy_stream)
         except BaseException:
@@ -223,12 +227,14 @@ def _resolve_device(device: Any = None, *, communication_backend: str = "hccl") 
     return torch.device(device)
 
 
-def _create_device_prefetcher(device: Any = None) -> DeviceStepPrefetcher | None:
+def _create_device_prefetcher(
+        device: Any = None, batch_to_device_fn: Callable[[Any, torch.device], Any] | None = None,
+) -> DeviceStepPrefetcher | None:
     """Create an H2D copy stage only when an accelerator is selected."""
     device = _resolve_device(device)
     if device.type == "cpu":
         return None
-    return DeviceStepPrefetcher(device)
+    return DeviceStepPrefetcher(device, batch_to_device_fn)
 
 
 __all__ = ["DeviceStepPrefetcher"]

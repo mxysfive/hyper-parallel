@@ -622,6 +622,7 @@ def build_local_balancing_dataloader(
         cost_model: CostModel | None = None,
         balancing_algorithm: BalancingAlgorithm | None = None,
         device: Any = None,
+        batch_to_device_fn: Callable[[Any, torch.device], Any] | None = None,
         model_batch_spec: Any = None,
 ) -> LocalBalancingDataLoader | MeshBalancingDataLoader:
     """Build the fixed node-local balancing pipeline over complete raw steps.
@@ -641,6 +642,9 @@ def build_local_balancing_dataloader(
             Costs and the improvement gate remain framework-owned.
         device: Training device; defaults to CPU with Gloo, otherwise the current
             accelerator. Pass an explicit NPU/CUDA device for H2D with Gloo.
+        batch_to_device_fn: Optional (pinned_batch, device) callback on HP's copy
+            stream. Use nonblocking transfers and retain selected CPU fields;
+            omit to move all tensors. Keep its semantics unchanged on resume.
         model_batch_spec: Optional fixed model-batch layout. When omitted,
             transmit variable multimodal tree metadata and broadcast tensor leaves.
 
@@ -666,7 +670,7 @@ def build_local_balancing_dataloader(
     cost_model = resolve_cost_model(cost_model, model_config)
     balancing_algorithm = resolve_balancing_algorithm(balancing_algorithm)
     device = _resolve_device(device, communication_backend=config.communication_backend)
-    device_prefetch = _create_device_prefetcher(device)
+    device_prefetch = _create_device_prefetcher(device, batch_to_device_fn)
     if not all(callable(callback) for callback in (metadata_fn, pack_fn, collate_fn)):
         raise ValueError("metadata_fn, pack_fn and collate_fn must be callable.")
     if not hasattr(local_dataloader, "__iter__"):

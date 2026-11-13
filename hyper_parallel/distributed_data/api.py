@@ -673,6 +673,7 @@ def build_distributed_dataloader(
         split_fn: Callable[[Any], Sequence[Any]] | None = None,
         collate_fn: Callable[[Sequence[Any]], Any] | None = None,
         device: Any = None,
+        batch_to_device_fn: Callable[[Any, torch.device], Any] | None = None,
         model_batch_spec: Any = None,
         batch_sampler: Any = None,
         external_step_source: ExternalStepSource | None = None,
@@ -707,6 +708,11 @@ def build_distributed_dataloader(
         device: Rank-local training device. HCCL uses its NPU for control, payload and
             final H2D. Gloo communicates on Host and defaults to CPU; pass an explicit
             NPU/CUDA device to enable H2D with Gloo.
+        batch_to_device_fn: Optional callback (pinned_batch, device) run on HP's
+            copy stream. Enqueue nonblocking copies there and return a tensor/container
+            tree; selected fields may remain on CPU. Defaults to moving all tensors.
+            Ignored for CPU output. Keep callback semantics unchanged when resuming;
+            native model_batch_spec must describe the returned tree and placements.
         model_batch_spec: Identical layout on every MP rank: nested dict/list/tuple
             leaves are TensorFieldSpec or static scalars. Dynamic values must be tensors;
             fields and dtypes are not broadcast. Defaults to collate_fn.model_batch_spec
@@ -747,6 +753,7 @@ def build_distributed_dataloader(
             collate_fn=default_collate_fn if collate_fn is None else collate_fn,
             model_config=model_config, cost_model=cost_model,
             balancing_algorithm=balancing_algorithm, device=device,
+            batch_to_device_fn=batch_to_device_fn,
             model_batch_spec=model_batch_spec,
         )
     return _build_distributed_dataloader_impl(
@@ -755,6 +762,7 @@ def build_distributed_dataloader(
         split_fn=split_fn, communication_device=device, model_batch_spec=model_batch_spec,
         batch_sampler=batch_sampler, model_config=model_config,
         cost_model=cost_model, balancing_algorithm=balancing_algorithm,
+        batch_to_device_fn=batch_to_device_fn,
     )
 
 
@@ -769,6 +777,7 @@ def _build_distributed_dataloader_impl(
         pack_fn: Callable[[Sequence[Any], int], Any] | None,
         collate_fn: Callable[[Sequence[Any]], Any] | None,
         communication_device: Any,
+        batch_to_device_fn: Callable[[Any, torch.device], Any] | None = None,
         model_batch_spec: Any = None,
         batch_sampler: Any = None,
         split_fn: Callable[[Any], Sequence[Any]] | None = None,
@@ -799,7 +808,7 @@ def _build_distributed_dataloader_impl(
     )
     device = state.communication_device
     # Validate device/stream support on every rank before any group is created.
-    device_prefetch = _create_device_prefetcher(device)
+    device_prefetch = _create_device_prefetcher(device, batch_to_device_fn)
     communication_device = device if config.communication_backend == "hccl" else None
     if model_batch_spec is None:
         model_batch_spec = getattr(collate_fn, "model_batch_spec", None)
