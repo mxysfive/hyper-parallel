@@ -223,6 +223,3 @@ Policies do not need identity attributes and are not fingerprinted.
 Plain Dataset + native BatchSampler retains its selection and
 checkpoint mechanism, but now receives the same cost and algorithm parameters.
 It also requires `model_config` when no custom cost model is supplied.
-
-A runnable CPU example is
-`examples/torch/distributed_data/external_dataset.py`.

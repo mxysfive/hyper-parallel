@@ -238,6 +238,5 @@ avoiding payload A2A. Metadata must describe deterministic, rank-independent
 outputs, and lengths must agree across constructors. Native sampling requires
 `drop_last=True` and `dataset_already_sharded=False`.
 
-Runnable examples are in [`examples/torch/distributed_data`](../../examples/torch/distributed_data).
 See [NODE_LOCAL_BALANCING.md](NODE_LOCAL_BALANCING.md) for the external pipeline
 and policy details.
