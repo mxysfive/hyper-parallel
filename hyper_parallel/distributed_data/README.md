@@ -74,6 +74,13 @@ complete local optimizer step as `[[raw_sample, ...], ...]`, with exactly
 `config.local_batch_size` nonempty bins. The source owns DP sharding, RNG,
 workers and step limits. Every constructor must yield the same number of steps.
 
+External loading owns one independent CPU producer per constructor. Supply an
+unstarted, cloudpickle-serializable source and CPU-only callbacks; disable source
+`pin_memory` because HP pins the final packed batch in the training process.
+The producer may start its own DataLoader workers. The next step starts
+automatically before returning the current batch, overlapping forward and
+backward. `prefetch_plan()` and `prefetch()` remain idempotent compatibility hooks.
+
 For HY, build the existing dynamic loader with an identity **final** collator,
 so it returns raw bins after its original selection. Keep its internal read
 collator unchanged. Pass HY's real `MyCollator` as the HP packing callback:
@@ -107,13 +114,9 @@ with closing(build_distributed_dataloader(
     device=device,
 )) as loader:
     for microbatches in loader:
-        for index, batch in enumerate(microbatches):
+        for batch in microbatches:
             loss = forward(batch)
-            if index == 0:
-                loader.prefetch_plan()
             loss.backward()
-            if index == 0:
-                loader.prefetch()
         optimizer.step()
         optimizer.zero_grad()
 ```
@@ -141,18 +144,26 @@ model the synchronized forward/backward rounds.
 
 ## Prefetch and variable model inputs
 
-External loading buffers one future step. With HCCL the main training thread
-launches metadata and payload communication on an independent data stream.
-Source loading, planning, decoding and collation run in a background worker;
-H2D uses a copy stream. Call `prefetch_plan()` and `prefetch()` at matching
-boundaries on all ranks, before blocking loss reads, to overlap that work with
-queued model computation. Without these hooks, `next(loader)` completes the
-same phases on demand. Gloo runs the pipeline in its background producer.
+External loading buffers one future step. Source reads, metadata generation,
+planning, payload encoding/decoding and collation run in the CPU producer.
+A lightweight parent thread serves serialized tensor collectives on an
+independent data stream, then pins/stages the final batch on the copy stream.
+HCCL control gathering downloads the complete length result once and the
+complete padded payload once, independent of the number of readers.
+CPU tensor payloads cross the process boundary through growable shared-memory
+buffers; the pipe carries layout descriptors. Full source state is transferred
+only for explicit checkpoint save/load. Consuming a device batch waits on its
+copy event, and each delivered CPU batch has storage independent of later
+shared-buffer reuse.
 
 For external sources, dict/list/tuple trees of dense tensors and
 `None/bool/int/float/str` values can change shape and structure on every step.
 HP broadcasts tree/dtype/shape metadata separately, then tensor payloads in
-their original dtypes. Empty tensors and variable image lists are supported.
+their original dtypes. All tensor fields with the same dtype and CPU/device
+placement are coalesced into one buffer, without a size limit. Dynamic layouts
+transmit repeated references to the same Tensor only
+once. Receivers retain independent leaf storage, and empty tensors require no
+payload collective. Variable image lists are supported.
 An optional `model_batch_spec` avoids dynamic tree serialization. Native custom
 MP batches require that fixed declaration; see `TensorFieldSpec` in
 [`model_batch.py`](model_batch.py). Pure-DP loading does not need a declaration.

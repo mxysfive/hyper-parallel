@@ -16,12 +16,10 @@
 
 from __future__ import annotations
 
-import copy
 import math
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from contextlib import nullcontext
-from dataclasses import asdict, dataclass, replace
-from threading import Thread
+from dataclasses import asdict, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import torch  # pylint: disable=forbidden-backend-import
@@ -40,6 +38,7 @@ from hyper_parallel.distributed_data.device_prefetch import (
 from hyper_parallel.distributed_data.locality import _create_locality_groups
 from hyper_parallel.distributed_data.mesh_loading import MeshBalancingDataLoader
 from hyper_parallel.distributed_data.planner import DynamicPackingPlanner
+from hyper_parallel.distributed_data.process_data import ProcessDataProducer, _cpu_rng_state, _restore_cpu_rng
 from hyper_parallel.distributed_data.schema import (
     DistributedPackingPlan,
     PackingConstraints,
@@ -48,461 +47,138 @@ from hyper_parallel.distributed_data.schema import (
 )
 from hyper_parallel.distributed_data.topology import DataTopology
 from hyper_parallel.distributed_data.transport import (
-    ControlGatherWork,
     DataPlaneTransport,
     ModelParallelTransport,
-    PayloadExchangeWork,
 )
 
 if TYPE_CHECKING:
     from hyper_parallel.distributed_data.api import DistributedDatasetConfig
 
 
-@dataclass(frozen=True)
-class _LocalBatch:
-    data: Any
-    stats: dict[str, Any] | None = None
-    host_batch: Any = None
+class _LocalStepProducer:
+    """Own the source cursor, balancing policy and CPU batch construction."""
 
-
-@dataclass(frozen=True)
-class _PreparedSourceStep:
-    """CPU-only source data prepared before the foreground collective phase."""
-
-    metadata: tuple[Any, ...]
-    local_payloads: dict[SampleKey, Any]
-
-
-@dataclass(frozen=True)
-class _PendingBatch:
-    """A planned step whose payload exchange may still be in flight."""
-
-    plan: DistributedPackingPlan
-    stats: dict[str, Any]
-    retained_payloads: dict[SampleKey, Any]
-    payload_work: PayloadExchangeWork | None
-
-
-class _LocalBalancingIterator(Iterator[Any]):
-    """Keep one step ahead with caller-owned accelerator collective launches."""
-
-    # This companion iterator implements the loader pipeline; these hooks are not public APIs.
-    # pylint: disable=protected-access
-
-    def __init__(self, loader: LocalBalancingDataLoader, restored: dict[str, Any] | None = None) -> None:
-        """Start source workers before entering the background pipeline."""
-        self._source = iter(loader.local_dataloader)
-        self._loader = loader
-        self._step = 0
-        self.finished = False
-        self._thread: Thread | None = None
-        self._result: _LocalBatch | None = None
-        self._prepared_source_step: _PreparedSourceStep | None = None
-        self._planned: Any = None
-        self._phase = "source"
-        self._error: BaseException | None = None
-        if restored is not None:
-            self._step = restored["step"]
-            self.finished = restored["finished"]
-            pending = restored["pending"]
-            if pending is not None:
-                host_batch, stats = pending
-                data = loader._device_prefetch(host_batch) if loader._device_prefetch is not None else host_batch
-                self._result = _LocalBatch(data, stats, host_batch)
-                self._phase = "batch"
-
-    def __next__(self) -> Any:
-        """Consume a prepared step, completing omitted prefetch hooks inline."""
-        if self.finished:
-            raise StopIteration
-        try:
-            if self._result is None:
-                if self._loader._uses_synchronous_collectives:
-                    self.prefetch()
-                    if self.finished:
-                        raise StopIteration
-                elif self._thread is None:
-                    self._start_prefetch()
-            self._join_worker()
-            result = self._result
-            self._result = None
-            if result is None:
-                raise RuntimeError("Local balancing prefetch completed without a batch.")
-        except BaseException:
-            self.finished = True
-            raise
-        self._step += 1
-        self._loader._resuming = False
-        self._loader.last_balance_stats = result.stats
-        self._start_prefetch()
-        return self._loader._deliver_batch(result, self._step)
-
-    def prefetch_plan(self) -> None:
-        """Launch metadata gathering and finish decoding and planning in the worker.
-
-        All ranks call at the same training boundary, after enqueueing compute
-        and before host synchronization. The variable-length size exchange
-        remains synchronous; no device-wide wait is introduced.
-        """
-        if not self._loader._uses_synchronous_collectives or self.finished:
-            return
-        if self._phase != "source":
-            return
-        if self._thread is None:
-            self._start_prefetch()
-        try:
-            self._join_worker()
-        except StopIteration:
-            self.finished = True
-            return
-        with self._loader._data_stream_context():
-            work = self._loader._transport.begin_all_gather_object(self._prepared_source_step.metadata)
-        self._phase = "plan"
-        self._start_worker(self._prepare_plan, work)
-
-    def prefetch(self) -> None:
-        """Launch next-step payload exchange on the caller, then finish off-thread.
-
-        All ranks must call at the same training boundary. Repeated calls
-        before consumption are harmless; they do not advance source progress.
-        """
-        self.prefetch_plan()
-        if not self._loader._uses_synchronous_collectives or self.finished:
-            return
-        if self._phase != "plan":
-            return
-        self._join_worker()
-        with self._loader._data_stream_context():
-            planned = self._planned
-            if self._loader.config.broadcast_plan:
-                planned = self._loader._transport.broadcast_from_planner(planned)
-            plan, stats = planned
-            pending = self._loader._begin_batch(self._prepared_source_step.local_payloads, plan, stats)
-        self._prepared_source_step = None
-        self._planned = None
-        self._phase = "batch"
-        self._start_worker(self._finish_batch, pending)
-
-    def _prepare_plan(self, work: ControlGatherWork) -> None:
-        with self._loader._data_stream_context():
-            self._planned = self._loader._make_plan(work.wait(), self._step)
-
-    def _finish_batch(self, pending: _PendingBatch) -> None:
-        with self._loader._data_stream_context():
-            self._result = self._loader._finish_batch(pending)
-
-    def _start_prefetch(self) -> None:
-        self._phase = "source"
-        self._result = None
-        self._prepared_source_step = None
-        self._start_worker(self._run_prefetch)
-
-    def _start_worker(self, callback: Callable[..., None], *args: Any) -> None:
-        self._error = None
-        self._thread = Thread(
-            target=self._run_worker, args=(callback, args),
-            name="hp-local-balance-prefetch", daemon=True,
-        )
-        self._thread.start()
-
-    def _run_worker(self, callback: Callable[..., None], args: tuple[Any, ...]) -> None:
-        try:
-            callback(*args)
-        except BaseException as exc:  # pylint: disable=broad-exception-caught
-            # Relay every worker failure, including interrupts, to the consumer.
-            self._error = exc
-
-    def _run_prefetch(self) -> None:
-        if self._loader._uses_synchronous_collectives:
-            raw_bins = next(self._source)
-            metadata, payloads = self._loader._read_step(raw_bins, self._step)
-            self._prepared_source_step = _PreparedSourceStep(metadata, payloads)
-        else:
-            self._result = self._loader._construct_batch(next(self._source), self._step)
-
-    def _join_worker(self) -> None:
-        self.wait_for_prefetch()
-        self._thread = None
-        if self._error is not None:
-            raise self._error
-
-    def wait_for_prefetch(self) -> None:
-        """Drain the active background phase without consuming its result."""
-        if self._thread is not None:
-            self._thread.join()
-
-    def close(self) -> None:
-        """Drain the producer before resetting the source or its epoch."""
-        self.wait_for_prefetch()
-        self.finished = True
-        self._thread = None
-        self._result = None
-        self._prepared_source_step = None
-        self._planned = None
-        self._error = None
-
-    def checkpoint_state(self) -> dict[str, Any]:
-        """Finish speculative work without delivering or discarding the next batch."""
-        if not self.finished:
-            try:
-                if self._loader._uses_synchronous_collectives:
-                    self.prefetch()
-                self._join_worker()
-            except StopIteration:
-                self.finished = True
-        pending = None
-        if self._result is not None:
-            pending = (self._result.host_batch, self._result.stats)
-        return {"step": self._step, "finished": self.finished, "pending": pending}
-
-
-class LocalBalancingDataLoader:
-    """Balance a frozen local-packer step using only one locality domain.
-
-    Raw samples, not collated tensors or entire indivisible packs, are routed.
-    The source controls sampling/filtering/packing and microbatch membership;
-    this wrapper never reads future samples to improve a current step's score.
-    All ranks must yield the same number of steps. Metadata and planner output
-    are trusted; local failures propagate without a collective error handshake.
-    """
-
-    def __init__(
-            self,
-            local_dataloader: Iterable[Sequence[Sequence[Any]]],
-            *,
-            config: DistributedDatasetConfig,
-            metadata_fn: Callable[[Any], SampleMetadata],
-            pack_fn: Callable[[Sequence[Any], int], Any],
-            collate_fn: Callable[[Sequence[Any]], Any],
-            planner: Any,
-            transport: DataPlaneTransport,
-            global_rank: int,
-            topology: DataTopology,
-            device_prefetch: DeviceStepPrefetcher | None = None,
-            balance_stats_callback: Callable[[dict[str, Any], int], None] | None = None,
-    ) -> None:
-        """Store the source, planner, and locality-scoped data plane."""
-        self.local_dataloader = local_dataloader
+    def __init__(self, transport: Any, *, source: Any, config: Any, metadata_fn: Any,
+                 pack_fn: Any, collate_fn: Any, planner: Any, global_rank: int) -> None:
+        """Store only CPU source components; the transport is a parent proxy."""
+        self.local_dataloader = source
         self.config = config
         self.group_ranks = transport.ranks
-        self.prefetches_to_device = device_prefetch is not None
-        self.last_balance_stats: dict[str, Any] | None = None
-        self.last_host_batch: Any = None
+        self._transport = transport
         self._metadata_fn = metadata_fn
         self._pack_fn = pack_fn
         self._collate_fn = collate_fn
         self._planner = planner
-        self._transport = transport
         self._global_rank = global_rank
-        self._topology = topology
         self._data_rank = self.group_ranks.index(global_rank)
-        self._iterator: _LocalBalancingIterator | None = None
-        self._device_prefetch = device_prefetch
-        self._data_stream = None
-        self._balance_stats_callback = balance_stats_callback
+        self._source = None
+        self._step = 0
         self._epoch = 0
-        self._restored_iterator_state = None
-        self._resuming = False
-
-    def _new_iterator(self) -> _LocalBalancingIterator:
-        iterator = _LocalBalancingIterator(self, self._restored_iterator_state)
-        self._restored_iterator_state = None
-        return iterator
-
-    @property
-    def _uses_synchronous_collectives(self) -> bool:
-        """Whether data collectives must stay on the training thread."""
-        backend = getattr(self._transport, "communication_backend", "gloo").lower()
-        return "hccl" in backend or "nccl" in backend
-
-    def _data_stream_context(self) -> Any:
-        """Reuse the data communication stream independently of the training stream."""
-        device = getattr(self._transport, "communication_device", None)
-        if device is None:
-            return nullcontext()
-        device = torch.device(device)
-        if device.type == "cpu":
-            return nullcontext()
-        accelerator = getattr(torch, device.type)
-        accelerator.set_device(device)
-        if self._data_stream is None:
-            self._data_stream = accelerator.Stream(device=device)
-        # Both launch and completion use this stream; neither waits on the
-        # training stream just to move independent next-step data.
-        return accelerator.stream(self._data_stream)
-
-    def prefetch_plan(self) -> None:
-        """Gather metadata and start planning at a rank-consistent compute boundary."""
-        if self._iterator is None:
-            self._iterator = self._new_iterator()
-        self._iterator.prefetch_plan()
-
-    def prefetch(self) -> None:
-        """Launch next-step exchange before synchronizing current-step computation."""
-        if self._iterator is None:
-            self._iterator = self._new_iterator()
-        self._iterator.prefetch()
-
-    def __len__(self) -> int:
-        """Return the source length when available."""
-        return len(self.local_dataloader)
-
-    @property
-    def step(self) -> int:
-        """Return the number of delivered steps in the current iterator."""
-        # The owned iterator holds the delivered cursor, not speculative source progress.
-        if self._iterator is not None:
-            return self._iterator._step  # pylint: disable=protected-access
-        return self._restored_iterator_state["step"] if self._restored_iterator_state is not None else 0
+        self._last_batch = None
+        self._pending = None
 
     def __next__(self) -> Any:
-        """Deliver a step without requiring a client-side iterator wrapper."""
-        if self._iterator is None:
-            self._iterator = self._new_iterator()
-        return next(self._iterator)
+        """Replay a pending batch or construct exactly one new source step."""
+        if self._pending is not None:
+            result, self._pending = self._pending, None
+        else:
+            if self._source is None:
+                self._source = iter(self.local_dataloader)
+            result = self._construct_batch()
+        self._step += 1
+        self._last_batch = result
+        return result
 
     def set_epoch(self, epoch: int) -> None:
-        """Forward epoch selection to the local source before starting iteration.
+        """Reset the producer's iterator before forwarding the epoch.
 
         Args:
-            epoch: Source epoch to start.
+            epoch: Source epoch to select; resetting discards speculative work.
         """
-        if self._resuming and epoch == self._epoch:
-            return
+        self._source = None
+        self._step = 0
         self._epoch = epoch
-        self._restored_iterator_state = None
-        self._resuming = False
-        if self._iterator is not None:
-            self._iterator.close()
-            self._iterator = None
-        if self._device_prefetch is not None:
-            self._device_prefetch.close()
-        self.last_host_batch = None
+        self._pending = self._last_batch = None
         setter = getattr(self.local_dataloader, "set_epoch", None)
         if callable(setter):
             setter(epoch)
 
-    def state_dict(self) -> dict[str, Any]:
-        """Snapshot source progress together with its unconsumed prefetched batch.
-
-        Call on every reader at the same consumed-step boundary. Source-owned
-        RNG and worker state must be included by the source's state_dict.
-        """
-        source_state = getattr(self.local_dataloader, "state_dict", None)
-        if not callable(source_state) or not callable(getattr(self.local_dataloader, "load_state_dict", None)):
-            raise NotImplementedError("External source must implement state_dict and load_state_dict for resume.")
-        iterator_state = self._restored_iterator_state
-        if self._iterator is not None:
-            iterator_state = self._iterator.checkpoint_state()
-        return copy.deepcopy({
-            "config": asdict(self.config), "group_ranks": self.group_ranks,
-            "global_rank": self._global_rank, "epoch": self._epoch, "topology": self._topology,
-            "source": source_state(), "iterator": iterator_state,
-        })
-
-    def load_state_dict(self, state: dict[str, Any]) -> None:
-        """Restore source progress and replay the saved unconsumed host batch.
+    def state_dict(self, consumed: int) -> dict[str, Any]:
+        """Retain a produced but unconsumed batch beside the source cursor.
 
         Args:
-            state: State saved at an optimizer-step boundary by every reader.
+            consumed: Number of steps already delivered to training.
         """
-        restore = getattr(self.local_dataloader, "load_state_dict", None)
-        if not callable(restore):
-            raise NotImplementedError("External source must implement load_state_dict for resume.")
-        if (state["config"] != asdict(self.config) or tuple(state["group_ranks"]) != self.group_ranks
-                or state["global_rank"] != self._global_rank or state["topology"] != self._topology):
-            raise ValueError("External loader checkpoint requires the same configuration and reader topology.")
-        self.close()
-        self._iterator = None
-        restore(copy.deepcopy(state["source"]))
-        self._epoch = state["epoch"]
-        self._restored_iterator_state = copy.deepcopy(state["iterator"])
-        self._resuming = True
+        if self._step not in (consumed, consumed + 1):
+            raise ValueError("Producer progress must be at most one step ahead of consumption.")
+        return {
+            "source": self.local_dataloader.state_dict(), "step": consumed, "epoch": self._epoch,
+            "pending": self._last_batch if self._step == consumed + 1 else self._pending,
+            "rng": _cpu_rng_state(),
+        }
 
-    def __iter__(self) -> Iterator[Any]:
-        """Yield constructed local microbatches after scoped metadata and sample exchange."""
-        # Re-entering an unfinished iterator must not drop its speculative batch
-        # after the stateful source has already advanced to the following step.
-        if self._iterator is None:
-            self._iterator = self._new_iterator()
-        return self._iterator
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore source and CPU randomness before creating its iterator.
 
-    def wait_for_prefetch(self) -> None:
-        """Drain data communication before teardown, preserving the next batch.
-
-        All ranks must call this at the same consumed-step boundary.
+        Args:
+            state: Previously saved source and pending-batch state.
         """
-        if self._iterator is not None:
-            self._iterator.wait_for_prefetch()
-        if self._device_prefetch is not None:
-            self._device_prefetch.close()
+        self._source = None
+        self.local_dataloader.load_state_dict(state["source"])
+        self._step, self._epoch = state["step"], state["epoch"]
+        self._pending = state["pending"]
+        self._last_batch = None
+        if state.get("rng") is not None:
+            _restore_cpu_rng(state["rng"])
 
     def close(self) -> None:
-        """Drain the producer and release unconsumed Host/device views."""
-        if self._iterator is not None:
-            self._iterator.close()
-        if self._device_prefetch is not None:
-            self._device_prefetch.close()
-        self.last_host_batch = None
+        """Release the source iterator and explicitly close an owned source."""
+        self._source = None
+        self._pending = self._last_batch = None
+        closer = getattr(self.local_dataloader, "close", None)
+        if callable(closer):
+            closer()
 
-    def _deliver_batch(self, result: _LocalBatch, step: int) -> Any:
-        batch = result.data
-        self.last_host_batch = result.host_batch
-        if self.prefetches_to_device:
-            batch = batch.take_batch()
-        if result.stats is not None and self._balance_stats_callback is not None and self._global_rank == 0:
-            self._balance_stats_callback(result.stats, step)
-        return batch
-
-    def _construct_batch(
-            self,
-            raw_bins: Sequence[Sequence[Any]],
-            step: int,
-    ) -> _LocalBatch:
-        metadata, local_payloads = self._read_step(raw_bins, step)
-        gathered = self._transport.all_gather_object(metadata)
-        plan, stats = self._plan_step(gathered, step)
-        return self._finish_batch(self._begin_batch(local_payloads, plan, stats))
-
-    def _begin_batch(
-            self, local_payloads: dict[SampleKey, Any], plan: DistributedPackingPlan, stats: dict[str, Any],
-    ) -> _PendingBatch:
-        """Start payload exchange for moved samples while retaining local destinations."""
+    def _construct_batch(self) -> tuple[Any, dict[str, Any]]:
+        metadata, payloads, error, exhausted = None, {}, None, False
+        try:
+            metadata, payloads = self._read_step(next(self._source), self._step)
+        except StopIteration:
+            exhausted = True
+        except Exception as exc:  # Publish source failures in the existing metadata collective.
+            error = f"{type(exc).__name__}: {exc}"
+        statuses = self._transport.all_gather_object((exhausted, error, metadata))
+        errors = [status[1] for status in statuses if status[1] is not None]
+        if errors:
+            raise RuntimeError(f"External data source failed: {errors}")
+        if all(status[0] for status in statuses):
+            raise StopIteration
+        if any(status[0] for status in statuses):
+            raise ValueError("External data sources must yield the same number of steps on every rank.")
+        gathered = [status[2] for status in statuses]
+        plan, stats = self._plan_step(gathered, self._step)
         if stats["moved_samples"]:
-            outgoing: dict[int, list[tuple[SampleKey, Any]]] = {}
-            retained_payloads = {}
-            for data_rank, local_batch in enumerate(plan.local_batches):
-                target_rank = self.group_ranks[data_rank]
-                owned = [
-                    (key, local_payloads[key])
-                    for packing_bin in local_batch
-                    for key in packing_bin.sample_keys
-                    if key.reader_rank == self._global_rank
-                ]
-                if target_rank == self._global_rank:
-                    retained_payloads.update(owned)
-                else:
-                    outgoing[target_rank] = owned
-            prepared = self._transport.prepare_exchange(outgoing)
-            work = self._transport.begin_exchange_prepared(prepared)
-        else:
-            # Every rank sees the same plan and skips an unchanged exchange.
-            retained_payloads = local_payloads
-            work = None
-        return _PendingBatch(plan, stats, retained_payloads, work)
-
-    def _finish_batch(self, pending: _PendingBatch) -> _LocalBatch:
-        """Complete payload exchange, pack and collate the local batch, then stage H2D."""
-        received = pending.retained_payloads
-        if pending.payload_work is not None:
-            received.update(pending.payload_work.wait())
-        target = pending.plan.local_batch_for(self._data_rank)
-        host_batch = self._collate_fn([
-            self._pack_fn([received[key] for key in packing_bin.sample_keys], self.config.seq_len)
-            for packing_bin in target
+            payloads = self._route_payloads(plan, payloads)
+        bins = plan.local_batch_for(self._data_rank)
+        batch = self._collate_fn([
+            self._pack_fn([payloads[key] for key in packing_bin.sample_keys], self.config.seq_len)
+            for packing_bin in bins
         ])
-        batch = self._device_prefetch(host_batch) if self._device_prefetch is not None else host_batch
-        return _LocalBatch(batch, pending.stats, host_batch)
+        return batch, stats
+
+    def _route_payloads(self, plan: DistributedPackingPlan, payloads: dict[SampleKey, Any]) -> dict[SampleKey, Any]:
+        outgoing = {}
+        retained = {}
+        for data_rank, local_batch in enumerate(plan.local_batches):
+            target = self.group_ranks[data_rank]
+            owned = [(key, payloads[key]) for packing_bin in local_batch for key in packing_bin.sample_keys
+                     if key.reader_rank == self._global_rank]
+            if target == self._global_rank:
+                retained.update(owned)
+            else:
+                outgoing[target] = owned
+        retained.update(self._transport.exchange(outgoing))
+        return retained
 
     def _read_step(self, raw_bins: Sequence[Sequence[Any]], step: int) -> tuple[tuple[Any, ...], dict[SampleKey, Any]]:
         """Bind raw source bins to keyed metadata and cached payloads for one step."""
@@ -525,8 +201,16 @@ class LocalBalancingDataLoader:
         return (tuple(key_bins), tuple(entries)), payloads
 
     def _plan_step(self, gathered: Sequence[Any], step: int) -> tuple[DistributedPackingPlan, dict[str, Any]]:
-        planned = self._make_plan(gathered, step)
-        return self._transport.broadcast_from_planner(planned) if self.config.broadcast_plan else planned
+        result, error = None, None
+        try:
+            result = self._make_plan(gathered, step)
+        except Exception as exc:  # Keep peers out of payload collectives when planning fails.
+            error = f"{type(exc).__name__}: {exc}"
+        if self.config.broadcast_plan:
+            result, error = self._transport.broadcast_from_planner((result, error))
+        if error is not None:
+            raise RuntimeError(f"External data planning failed: {error}")
+        return result
 
     def _make_plan(self, gathered: Sequence[Any], step: int) -> Any:
         """Build a plan and balancing statistics on the designated planning ranks."""
@@ -608,6 +292,170 @@ class LocalBalancingDataLoader:
             "recv_samples": tuple(recv_samples),
             **self._planner.last_balance_decision,
         }
+
+
+class LocalBalancingDataLoader(Iterator[Any]):
+    """Balance external steps in a CPU process with parent-owned collectives.
+
+    The source and callbacks must be serializable before iteration starts and
+    must produce CPU data. One speculative step overlaps training, including
+    packing, data communication and H2D. All ranks consume matching steps.
+    """
+
+    def __init__(
+            self, local_dataloader: Iterable[Sequence[Sequence[Any]]], *, config: DistributedDatasetConfig,
+            metadata_fn: Callable[[Any], SampleMetadata], pack_fn: Callable[[Sequence[Any], int], Any],
+            collate_fn: Callable[[Sequence[Any]], Any], planner: Any, transport: DataPlaneTransport,
+            global_rank: int, device_prefetch: DeviceStepPrefetcher | None = None,
+            topology: DataTopology,
+            balance_stats_callback: Callable[[dict[str, Any], int], None] | None = None,
+    ) -> None:
+        """Store the source description without starting workers or device work."""
+        self.local_dataloader = local_dataloader
+        self.config = config
+        self.group_ranks = transport.ranks
+        self._topology = topology
+        self.prefetches_to_device = device_prefetch is not None
+        self.last_balance_stats = None
+        self.last_host_batch = None
+        self._transport = transport
+        self._global_rank = global_rank
+        self._device_prefetch = device_prefetch
+        self._balance_stats_callback = balance_stats_callback
+        self._factory = partial(
+            _LocalStepProducer, source=local_dataloader, config=config, metadata_fn=metadata_fn,
+            pack_fn=pack_fn, collate_fn=collate_fn, planner=planner, global_rank=global_rank,
+        )
+        self._producer = None
+        self._step = 0
+        self._epoch = 0
+        self._finished = False
+        self._resuming = False
+
+    def _ensure_producer(self) -> ProcessDataProducer:
+        if self._producer is None:
+            self._producer = ProcessDataProducer(self._factory, self._transport, self._device_prefetch)
+        return self._producer
+
+    def __iter__(self) -> LocalBalancingDataLoader:
+        """Keep repeated iteration at the same delivered cursor."""
+        return self
+
+    def __len__(self) -> int:
+        """Return the external source length."""
+        return len(self.local_dataloader)
+
+    @property
+    def step(self) -> int:
+        """Return the number of delivered steps in this epoch."""
+        return self._step
+
+    def prefetch(self) -> None:
+        """Prepare one step while current-step forward/backward is running."""
+        if not self._finished:
+            self._ensure_producer().prefetch()
+
+    def prefetch_plan(self) -> None:
+        """Keep trainer hooks compatible with the single process pipeline."""
+        self.prefetch()
+
+    def __next__(self) -> Any:
+        """Deliver a complete batch and immediately prefetch its successor."""
+        if self._finished:
+            self._finished = True
+            raise StopIteration
+        try:
+            batch, stats = self._ensure_producer().take()
+        except StopIteration:
+            self._finished = True
+            raise
+        self._step += 1
+        self._resuming = False
+        self.last_balance_stats = stats
+        self.last_host_batch = self._producer.last_host_batch
+        if self.prefetches_to_device:
+            batch = batch.take_batch()
+        if stats is not None and self._balance_stats_callback is not None and self._global_rank == 0:
+            self._balance_stats_callback(stats, self._step)
+        self.prefetch()
+        return batch
+
+    def wait_for_prefetch(self) -> None:
+        """Drain pending work without changing the consumed cursor."""
+        if self._producer is not None:
+            self._producer.wait()
+        if self._device_prefetch is not None:
+            self._device_prefetch.close()
+
+    def set_epoch(self, epoch: int) -> None:
+        """Reset the source in its owning process, preserving a restored same epoch.
+
+        Args:
+            epoch: Source epoch to select; resetting discards speculative work.
+        """
+        if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 0:
+            raise ValueError("epoch must be a non-negative integer.")
+        if self._resuming and epoch == self._epoch:
+            return
+        self._ensure_producer().set_epoch(epoch)
+        if self._device_prefetch is not None:
+            self._device_prefetch.close()
+        self._step, self._epoch = 0, epoch
+        self._finished = self._resuming = False
+        self.last_balance_stats = self.last_host_batch = None
+
+    def _checkpoint_config(self) -> dict[str, Any]:
+        """Separate communication placement from the source/packing identity."""
+        config = asdict(self.config)
+        config.pop("communication_backend")
+        return config
+
+    def state_dict(self) -> dict[str, Any]:
+        """Snapshot the consumed boundary, retaining the legacy checkpoint layout."""
+        if not callable(getattr(self.local_dataloader, "state_dict", None)):
+            raise NotImplementedError("External checkpoint requires source.state_dict().")
+        state = self._ensure_producer().state_dict(self._step)
+        return {
+            "config": self._checkpoint_config(), "group_ranks": self.group_ranks,
+            "global_rank": self._global_rank, "epoch": self._epoch, "topology": self._topology,
+            "source": state["source"], "rng": state["rng"],
+            "iterator": {"step": self._step, "finished": self._finished, "pending": state["pending"]},
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore source progress and replay the saved unconsumed CPU batch.
+
+        Args:
+            state: Previously saved source and pending-batch state.
+        """
+        if not callable(getattr(self.local_dataloader, "load_state_dict", None)):
+            raise NotImplementedError("External checkpoint requires source.load_state_dict().")
+        config = dict(state["config"])
+        config.pop("communication_backend", None)
+        config.pop("external_auto_prefetch", None)
+        if (config != self._checkpoint_config() or tuple(state["group_ranks"]) != self.group_ranks
+                or state["global_rank"] != self._global_rank or state["topology"] != self._topology):
+            raise ValueError("External loader checkpoint requires the same configuration and reader topology.")
+        iterator = state["iterator"] or {"step": 0, "finished": False, "pending": None}
+        self._ensure_producer().load_state_dict({
+            "source": state["source"], "step": iterator["step"], "epoch": state["epoch"],
+            "pending": iterator["pending"], "rng": state.get("rng"),
+        })
+        self._step, self._epoch = iterator["step"], state["epoch"]
+        self._finished = iterator["finished"]
+        self._resuming = True
+        self.last_balance_stats = self.last_host_batch = None
+
+    def close(self) -> None:
+        """Stop owned CPU workers after pending communication and H2D complete."""
+        try:
+            if self._producer is not None:
+                self._producer.close()
+        finally:
+            if self._device_prefetch is not None:
+                self._device_prefetch.close()
+            self._finished = True
+            self.last_host_batch = None
 
 
 def build_local_balancing_dataloader(

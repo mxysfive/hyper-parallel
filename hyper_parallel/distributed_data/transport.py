@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import math
 import pickle
 import struct
 from collections.abc import Mapping, Sequence
@@ -26,7 +27,7 @@ from typing import Any
 import torch  # pylint: disable=forbidden-backend-import
 import torch.distributed as dist  # pylint: disable=forbidden-backend-import
 
-from hyper_parallel.distributed_data.model_batch import ModelBatchLayout
+from hyper_parallel.distributed_data.model_batch import ModelBatchLayout, TensorFieldSpec
 from hyper_parallel.distributed_data.schema import SampleKey
 from hyper_parallel.distributed_data.topology import DataTopology
 
@@ -52,27 +53,6 @@ class PreparedPayloadExchange:
     send_storage: bytearray
     send_tensor: torch.Tensor
     local_segment: bytes
-
-
-@dataclass
-class ControlGatherWork:
-    """Retain control buffers until the consumer waits and decodes on the launch stream."""
-
-    encoded: torch.Tensor | None = None
-    sizes: tuple[int, ...] = ()
-    gathered: tuple[torch.Tensor, ...] = ()
-    data_work: Any = None
-    completed_values: tuple[Any, ...] | None = None
-
-    def wait(self) -> tuple[Any, ...]:
-        """Wait for gathered bytes and decode them with the launch device and stream bound."""
-        if self.completed_values is None:
-            if self.data_work is not None:
-                self.data_work.wait()
-            self.completed_values = tuple(
-                _decode_control(payload, size) for payload, size in zip(self.gathered, self.sizes)
-            )
-        return self.completed_values
 
 
 @dataclass
@@ -143,6 +123,55 @@ def _decode_control(payload: torch.Tensor, size: int) -> Any:
     return pickle.loads(encoded)
 
 
+def all_gather_control_tensor(
+        encoded: torch.Tensor, *, group: Any, device: Any = None,
+) -> tuple[torch.Tensor, list[int]]:
+    """Gather serialized CPU bytes, downloading each collective result once.
+
+    Returns a flat CPU tensor and per-rank lengths. Rows are padded to the
+    maximum length; decoding belongs to the CPU producer.
+
+    Args:
+        encoded: Serialized CPU bytes to communicate.
+        group: Process group participating in this collective.
+        device: Rank-local communication device, or CPU when omitted.
+    """
+    resolved = torch.device("cpu") if device is None else torch.device(device)
+    world_size = dist.get_world_size(group)
+    local_size = torch.tensor([encoded.numel()], dtype=torch.int64, device=resolved)
+    sizes = torch.empty((world_size,), dtype=torch.int64, device=resolved)
+    dist.all_gather_into_tensor(sizes, local_size, group=group)
+    host_sizes = sizes.cpu().tolist()
+    maximum = max(1, *host_sizes)
+    padded = torch.zeros((maximum,), dtype=torch.uint8, device=resolved)
+    padded[:encoded.numel()].copy_(encoded)
+    gathered = torch.empty((world_size * maximum,), dtype=torch.uint8, device=resolved)
+    dist.all_gather_into_tensor(gathered, padded, group=group)
+    return gathered.cpu(), host_sizes
+
+
+def broadcast_control_tensor(
+        encoded: torch.Tensor, *, src: int, group: Any, device: Any = None,
+) -> torch.Tensor:
+    """Broadcast serialized bytes without decoding objects in the training process.
+
+    Args:
+        encoded: Serialized CPU bytes to communicate.
+        src: Global rank that supplies the broadcast value.
+        group: Process group participating in this collective.
+        device: Rank-local communication device, or CPU when omitted.
+    """
+    resolved = torch.device("cpu") if device is None else torch.device(device)
+    size = torch.tensor([encoded.numel()], dtype=torch.int64, device=resolved)
+    dist.broadcast(size, src=src, group=group)
+    count = size.cpu().tolist()[0]
+    payload = torch.empty((count,), dtype=torch.uint8, device=resolved)
+    if dist.get_rank() == src:
+        payload.copy_(encoded)
+    dist.broadcast(payload, src=src, group=group)
+    return payload.cpu()
+
+
 def all_gather_control_object(
         value: Any,
         *,
@@ -161,36 +190,16 @@ def all_gather_control_object(
     Returns:
         Gathered values in process-group rank order.
     """
-    return _begin_all_gather_control_object(value, group=group, device=device, backend=backend).wait()
-
-
-def _begin_all_gather_control_object(
-        value: Any,
-        *,
-        group: Any = None,
-        device: Any = None,
-        backend: str | None = None,
-) -> ControlGatherWork:
-    """Exchange lengths on the caller, then launch accelerator bytes without decoding."""
     effective_backend = _control_backend(group, backend)
     if not _is_accelerator_backend(effective_backend):
         gathered = [None] * dist.get_world_size(group)
         dist.all_gather_object(gathered, value, group=group)
-        return ControlGatherWork(completed_values=tuple(gathered))
+        return tuple(gathered)
     resolved = _require_control_device(device, effective_backend)
-    encoded, encoded_size = _encode_control(value, resolved)
-    local_size = torch.tensor([encoded_size], dtype=torch.int64, device=resolved)
-    sizes = [torch.empty_like(local_size) for _ in range(dist.get_world_size(group))]
-    dist.all_gather(sizes, local_size, group=group)
-    host_sizes = tuple(int(item.item()) for item in sizes)
-    max_size = max(host_sizes)
-    if encoded.numel() < max_size:
-        padded = torch.zeros((max_size,), dtype=torch.uint8, device=resolved)
-        padded[:encoded.numel()] = encoded
-        encoded = padded
-    gathered = [torch.empty_like(encoded) for _ in sizes]
-    work = dist.all_gather(gathered, encoded, group=group, async_op=True)
-    return ControlGatherWork(encoded=encoded, sizes=host_sizes, gathered=tuple(gathered), data_work=work)
+    encoded = torch.frombuffer(bytearray(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)), dtype=torch.uint8)
+    gathered, host_sizes = all_gather_control_tensor(encoded, group=group, device=resolved)
+    host_payloads = gathered.view(len(host_sizes), -1).numpy()
+    return tuple(pickle.loads(payload[:size].tobytes()) for payload, size in zip(host_payloads, host_sizes))
 
 
 def broadcast_control_object(
@@ -721,26 +730,43 @@ class DataPlaneTransport:
         Returns:
             Values in data-plane rank order.
         """
-        return self.begin_all_gather_object(value).wait()
-
-    def begin_all_gather_object(self, value: Any) -> ControlGatherWork:
-        """Launch control gathering and defer accelerator result decoding to the consumer.
-
-        Args:
-            value: Rank-local control value.
-
-        Returns:
-            Work retaining communication buffers. Wait on the launch device and
-            stream before using the result. Accelerator length exchange remains
-            synchronous; Gloo and single-rank results are already complete.
-        """
         if len(self._ranks) == 1:
-            return ControlGatherWork(completed_values=(value,))
-        return _begin_all_gather_control_object(
+            return (value,)
+        return all_gather_control_object(
             value,
             group=self._control_group,
             device=self._communication_device,
         )
+
+    def exchange_cpu_request(self, operation: str, value: Any) -> Any:
+        """Serve an ordered CPU-producer request using only serialized tensors.
+
+        The caller owns the data stream and must finish the returned CPU copy
+        before publishing it to the producer. No source objects, planner
+        objects, or raw samples are deserialized here.
+
+        Args:
+            operation: Ordered gather, broadcast or payload-exchange request.
+            value: CPU request value or nested tensor batch.
+        """
+        if operation == "gather":
+            return all_gather_control_tensor(
+                value, group=self._control_group, device=self._communication_device,
+            )
+        if operation == "broadcast":
+            return broadcast_control_tensor(
+                value, src=self._planner_rank, group=self._control_group, device=self._communication_device,
+            )
+        if operation != "exchange":
+            raise ValueError(f"Unknown CPU producer transport operation: {operation}.")
+        encoded, splits = value
+        prepared = PreparedPayloadExchange(
+            tuple(splits), bytearray(), encoded.to(self._communication_device or "cpu"), b"",
+        )
+        work = self.begin_exchange_prepared(prepared)
+        if work.data_work is not None:
+            work.data_work.wait()
+        return work.received_tensor.cpu(), work.output_splits
 
     def all_ranks_true(self, value: bool) -> bool:
         """Return whether every data-plane rank supplied ``True``.
@@ -901,8 +927,19 @@ class DataPlaneTransport:
         )
 
 
+def _model_tensor_buckets(
+        fields: Sequence[TensorFieldSpec], references: Sequence[int],
+) -> list[list[int]]:
+    """Group all unique fields by placement and dtype without splitting by size."""
+    grouped = {}
+    for index, field in enumerate(fields):
+        if references[index] == index:
+            grouped.setdefault((field.device, field.dtype), []).append(index)
+    return list(grouped.values())
+
+
 class ModelParallelTransport:
-    """Broadcast tensor leaves using fixed or per-batch model layouts."""
+    """Broadcast coalesced tensor leaves using fixed or per-batch model layouts."""
 
     def __init__(
             self, topology: DataTopology, groups: DataGroups, communication_device: Any = None,
@@ -936,7 +973,9 @@ class ModelParallelTransport:
 
         With a fixed model_batch_spec, every rank must configure the same layout;
         static values come from that declaration. Dynamic layouts transmit
-        the tree and scalars separately from direct tensor broadcasts. Source validation failures are signaled
+        the tree, scalars and repeated tensor references separately from tensor payloads.
+        All fields with the same dtype and placement share one payload broadcast,
+        regardless of size. Source validation failures are signaled
         in the header before peers allocate or enter payload collectives.
 
         Args:
@@ -979,8 +1018,7 @@ class ModelParallelTransport:
         if values[0] != 1:
             raise ValueError("Invalid model batch status header.")
         shapes = self._layout.shapes(values[1:])
-        received = [self._broadcast_tensor(field, shape, tensors[index] if is_constructor else None)
-                    for index, (field, shape) in enumerate(zip(self._layout.fields, shapes))]
+        received = self._broadcast_tensors(self._layout.fields, shapes, tensors)
         return self._layout.rebuild(received)
 
     def _broadcast_dynamic(self, batch: Any, error: BaseException | None) -> Any:
@@ -996,26 +1034,60 @@ class ModelParallelTransport:
                 else:
                     spec = ModelBatchLayout.describe(batch)
                     tensors = ModelBatchLayout(spec).flatten(batch)
-                    descriptor = (1, spec)
+                    first_indices = {}
+                    references = [first_indices.setdefault(id(tensor), index) for index, tensor in enumerate(tensors)]
+                    descriptor = (1, (spec, references))
             except BaseException as exc:  # pylint: disable=broad-exception-caught
                 error = exc
                 descriptor = (-1, str(exc))
-        status, spec = broadcast_control_object(
+        status, payload = broadcast_control_object(
             descriptor, src=self._constructor_rank, group=self._control_group,
             device=self._communication_device,
         )
         if status == -1:
             if error is not None:
                 raise error
-            raise RuntimeError(f"The Data Constructor failed: {spec}")
+            raise RuntimeError(f"The Data Constructor failed: {payload}")
         if status == 0:
             return None
+        spec, references = payload
         layout = ModelBatchLayout(spec)
-        received = [
-            self._broadcast_tensor(field, field.shape, tensors[index] if is_constructor else None)
-            for index, field in enumerate(layout.fields)
-        ]
+        received = self._broadcast_tensors(layout.fields, [field.shape for field in layout.fields], tensors, references)
         return layout.rebuild(received)
+
+    def _broadcast_tensors(
+            self, fields: Sequence[TensorFieldSpec], shapes: Sequence[tuple[int, ...]],
+            sources: list[torch.Tensor], references: Sequence[int] | None = None,
+    ) -> list[torch.Tensor]:
+        """Execute the same bucket schedule on all peers and restore leaf order."""
+        if references is None:
+            references = range(len(fields))
+        received = [None] * len(fields)
+        for indices in _model_tensor_buckets(fields, references):
+            values = self._broadcast_bucket(
+                fields[indices[0]], [shapes[index] for index in indices],
+                [sources[index] for index in indices] if sources else [],
+            )
+            for index, value in zip(indices, values):
+                received[index] = value
+        # Separate receiver allocations preserve the previous leaf mutation/storage semantics.
+        return [received[ref] if index == ref or sources else received[ref].clone()
+                for index, ref in enumerate(references)]
+
+    def _broadcast_bucket(
+            self, field: TensorFieldSpec, shapes: list[tuple[int, ...]], sources: list[torch.Tensor],
+    ) -> list[torch.Tensor]:
+        """Pack one bucket, broadcast it, and restore independently owned tensor leaves."""
+        if len(shapes) == 1:
+            return [self._broadcast_tensor(field, shapes[0], sources[0] if sources else None)]
+        target = torch.device("cpu") if field.device == "cpu" else self._device
+        local = [tensor.to(target).contiguous() for tensor in sources]
+        sizes = [math.prod(shape) for shape in shapes]
+        packed = torch.cat([tensor.reshape(-1) for tensor in local]) if local else None
+        packed = self._broadcast_tensor(field, (sum(sizes),), packed)
+        if local:
+            return local
+        return [part.reshape(shape).clone() for part, shape in zip(packed.split(sizes), shapes)]
 
     def _broadcast_tensor(self, field: Any, shape: tuple[int, ...], source: Any) -> torch.Tensor:
         """Broadcast one declared tensor using a backend-compatible transfer device."""
