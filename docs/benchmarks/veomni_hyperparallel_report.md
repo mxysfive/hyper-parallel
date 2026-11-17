@@ -92,19 +92,13 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack
 
 ```text
 64die，SP=1，EP=1，HSDP shard=32，replicate=2
-每rank序列长度8K / 16K
+每rank序列长度16K
 ```
 
 #### 实验情况
 
 | 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated / reserved（GiB） | 显存节省 allocated / reserved（%） |
 | --- | --- | --- | --- | --- | --- |
-| 8K | **VeOmni FSDP2＋AdamW（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 8K | Hyper HSDP＋AdamW | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 8K | Hyper HSDP＋Hyper Muon std | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 8K | Hyper HSDP＋Hyper Muon gram_quack | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 | 16K | **VeOmni FSDP2＋AdamW（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
 | 16K | Hyper HSDP＋AdamW | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 | 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
@@ -113,30 +107,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack
 | 16K | Hyper HSDP＋Hyper Muon gram_quack | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 
 #### Profiling
-
-##### 8K · VeOmni FSDP2＋AdamW
-
-截图待补充。
-
-##### 8K · Hyper HSDP＋AdamW
-
-截图待补充。
-
-##### 8K · VeOmni FSDP2＋VeOmni Muon std
-
-截图待补充。
-
-##### 8K · Hyper HSDP＋Hyper Muon std
-
-截图待补充。
-
-##### 8K · VeOmni FSDP2＋VeOmni Muon gram
-
-截图待补充。
-
-##### 8K · Hyper HSDP＋Hyper Muon gram_quack
-
-截图待补充。
 
 ##### 16K · VeOmni FSDP2＋AdamW
 
@@ -163,14 +133,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack
 截图待补充。
 
 #### 精度对比
-
-##### 8K
-
-VeOmni FSDP2＋AdamW / Hyper HSDP＋AdamW loss对比图：待补充。
-
-VeOmni FSDP2＋VeOmni Muon std / Hyper HSDP＋Hyper Muon std loss对比图：待补充。
-
-VeOmni FSDP2＋VeOmni Muon gram / Hyper HSDP＋Hyper Muon gram_quack loss对比图：待补充。
 
 ##### 16K
 
