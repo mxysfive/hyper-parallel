@@ -138,10 +138,6 @@ micro batch size=1，每步一个 microbatch，GBS=16；每组 100 步
 | 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
 | 16K | Hyper FSDP＋Hyper Muon std | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 
-步时取 rank 0 日志的同一步配对平均，排除前 5 步预热和第 17–21 步 profiling 预热及采集，共 90 步；其中 Hyper 有 47 步更快、43 步更慢。按两组步时和配对步时差的 1.5 倍 IQR 检查后，第 61 步被标为配对差值异常；若两组均剔除该步，剩余 89 步的均值为 44.9103 / 44.5220 s，按本文性能公式提升 0.87%。这是同一组机器上的单次串行对比，差异较小；异常标记不等同于日志错误。
-
-显存取每组 100 步中所有 128 个 rank 各自峰值的最大值，allocated 和 reserved 分别比较；负的节省率表示占用增加。上述百分比由未四舍五入的数据计算。[100 步原始耗时、loss、梯度范数及筛选标记](assets/veomni/steps_128die_16k_adamw.csv)；未参与 IQR 检查的预热和 profiling 步，其异常标记留空。[各 rank 显存峰值](assets/veomni/memory_128die_16k_adamw.csv)。
-
 #### Profiling
 
 ##### 16K · VeOmni FSDP2＋AdamW
@@ -167,7 +163,5 @@ micro batch size=1，每步一个 microbatch，GBS=16；每组 100 步
 VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
 ![VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW loss对比](assets/veomni/loss_128die_16k_adamw.svg)
-
-图中为 rank 0 日志记录的 100 步 loss，下图为 Hyper 减 VeOmni；两组最大绝对差约为 0.0003553（第 41 步）。该对比反映本次运行的 loss 曲线，不代表逐位一致或完整精度验收。图中数据保留日志原始精度。
 
 VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比图：待补充。
