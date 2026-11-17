@@ -33,10 +33,6 @@ micro batch size=1，梯度累加数=1，GBS=16；每组100步
 | 8K | Hyper FSDP＋AdamW | 5.8394 | 31.61 | 47.34 / 50.70 | -0.21 / 7.80 |
 | 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 7.8723 | — | 39.30 / 47.13 | — / — |
 | 8K | Hyper FSDP＋Hyper Muon std | 6.0993 | 29.07 | 39.40 / 42.66 | -0.25 / 9.48 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 7.9240 | — | 39.30 / 47.11 | — / — |
-| 8K | Hyper FSDP＋Hyper Muon gram_quack | 6.1949 | 27.91 | 39.40 / 42.74 | -0.25 / 9.28 |
-
-VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
 #### Profiling
 
@@ -56,14 +52,6 @@ VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
 <img src="assets/veomni/profile_16die_8k_hyper_muon_std.png" alt="Hyper FSDP＋Hyper Muon std profiling" width="900">
 
-##### 8K · VeOmni FSDP2＋VeOmni Muon gram
-
-<img src="assets/veomni/profile_16die_8k_native_muon_gram.png" alt="VeOmni FSDP2＋VeOmni Muon gram profiling" width="900">
-
-##### 8K · Hyper FSDP＋Hyper Muon gram_quack
-
-<img src="assets/veomni/profile_16die_8k_hyper_muon_gram_quack.png" alt="Hyper FSDP＋Hyper Muon gram_quack profiling" width="900">
-
 #### 精度对比
 
 ##### 8K
@@ -75,10 +63,6 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 ![VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比](assets/veomni/loss_16die_8k_muon_std.svg)
-
-VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack
-
-![VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack loss对比](assets/veomni/loss_16die_8k_muon_gram.svg)
 
 ### 4机64die
 
@@ -101,8 +85,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack
 | 16K | Hyper HSDP＋AdamW | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 | 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
 | 16K | Hyper HSDP＋Hyper Muon std | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
-| 16K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 16K | Hyper HSDP＋Hyper Muon gram_quack | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 
 #### Profiling
 
@@ -122,14 +104,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack
 
 截图待补充。
 
-##### 16K · VeOmni FSDP2＋VeOmni Muon gram
-
-截图待补充。
-
-##### 16K · Hyper HSDP＋Hyper Muon gram_quack
-
-截图待补充。
-
 #### 精度对比
 
 ##### 16K
@@ -137,8 +111,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack
 VeOmni FSDP2＋AdamW / Hyper HSDP＋AdamW loss对比图：待补充。
 
 VeOmni FSDP2＋VeOmni Muon std / Hyper HSDP＋Hyper Muon std loss对比图：待补充。
-
-VeOmni FSDP2＋VeOmni Muon gram / Hyper HSDP＋Hyper Muon gram_quack loss对比图：待补充。
 
 ## 实验二：Qwen3.8-Flash-Next
 
@@ -163,8 +135,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper HSDP＋Hyper Muon gram_quack loss对比�
 | 16K | Hyper FSDP＋AdamW | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 | 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
 | 16K | Hyper FSDP＋Hyper Muon std | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
-| 16K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 16K | Hyper FSDP＋Hyper Muon gram_quack | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 
 #### Profiling
 
@@ -184,14 +154,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper HSDP＋Hyper Muon gram_quack loss对比�
 
 截图待补充。
 
-##### 16K · VeOmni FSDP2＋VeOmni Muon gram
-
-截图待补充。
-
-##### 16K · Hyper FSDP＋Hyper Muon gram_quack
-
-截图待补充。
-
 #### 精度对比
 
 ##### 16K
@@ -199,8 +161,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper HSDP＋Hyper Muon gram_quack loss对比�
 VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW loss对比图：待补充。
 
 VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比图：待补充。
-
-VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack loss对比图：待补充。
 
 ## 实验三：Qwen3.5-397B-A17B
 
@@ -225,14 +185,10 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack loss对比�
 | 8K | Hyper FSDP＋AdamW | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 | 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
 | 8K | Hyper FSDP＋Hyper Muon std | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 8K | Hyper FSDP＋Hyper Muon gram_quack | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 | 16K | **VeOmni FSDP2＋AdamW（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
 | 16K | Hyper FSDP＋AdamW | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 | 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
 | 16K | Hyper FSDP＋Hyper Muon std | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
-| 16K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 16K | Hyper FSDP＋Hyper Muon gram_quack | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
 
 #### Profiling
 
@@ -252,14 +208,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack loss对比�
 
 截图待补充。
 
-##### 8K · VeOmni FSDP2＋VeOmni Muon gram
-
-截图待补充。
-
-##### 8K · Hyper FSDP＋Hyper Muon gram_quack
-
-截图待补充。
-
 ##### 16K · VeOmni FSDP2＋AdamW
 
 截图待补充。
@@ -276,14 +224,6 @@ VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack loss对比�
 
 截图待补充。
 
-##### 16K · VeOmni FSDP2＋VeOmni Muon gram
-
-截图待补充。
-
-##### 16K · Hyper FSDP＋Hyper Muon gram_quack
-
-截图待补充。
-
 #### 精度对比
 
 ##### 8K
@@ -292,12 +232,8 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW loss对比图：待补充。
 
 VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比图：待补充。
 
-VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack loss对比图：待补充。
-
 ##### 16K
 
 VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW loss对比图：待补充。
 
 VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比图：待补充。
-
-VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack loss对比图：待补充。
