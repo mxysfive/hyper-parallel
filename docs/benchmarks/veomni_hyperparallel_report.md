@@ -44,27 +44,27 @@ VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
 ##### 8K · VeOmni FSDP2＋AdamW
 
-已采集，截图待补充。
+<img src="assets/veomni/profile_16die_8k_native_adamw.png" alt="VeOmni FSDP2＋AdamW profiling" width="1100">
 
 ##### 8K · Hyper FSDP＋AdamW
 
-已采集，截图待补充。
+<img src="assets/veomni/profile_16die_8k_hyper_adamw.png" alt="Hyper FSDP＋AdamW profiling" width="1100">
 
 ##### 8K · VeOmni FSDP2＋VeOmni Muon std
 
-已采集，截图待补充。
+<img src="assets/veomni/profile_16die_8k_native_muon_std.png" alt="VeOmni FSDP2＋VeOmni Muon std profiling" width="1100">
 
 ##### 8K · Hyper FSDP＋Hyper Muon std
 
-已采集，截图待补充。
+<img src="assets/veomni/profile_16die_8k_hyper_muon_std.png" alt="Hyper FSDP＋Hyper Muon std profiling" width="1100">
 
 ##### 8K · VeOmni FSDP2＋VeOmni Muon gram
 
-已采集，截图待补充。
+<img src="assets/veomni/profile_16die_8k_native_muon_gram.png" alt="VeOmni FSDP2＋VeOmni Muon gram profiling" width="1100">
 
 ##### 8K · Hyper FSDP＋Hyper Muon gram_quack
 
-已采集，截图待补充。
+<img src="assets/veomni/profile_16die_8k_hyper_muon_gram_quack.png" alt="Hyper FSDP＋Hyper Muon gram_quack profiling" width="1100">
 
 #### 精度对比
 
