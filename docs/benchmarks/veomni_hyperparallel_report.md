@@ -2,6 +2,8 @@
 
 本文在 `docs/veomni-benchmark-report` 分支协作维护，汇总后同步到 [Gist 报告](https://gist.github.com/Cui-yshoho/5a912d774a3693815387fb635b5e46d3)。
 
+## HyperParallel 接入配置
+
 ```yaml
 hyper_parallel:
   comm_fusion: false        # 将参数/梯度打包到 buffer，进行融合通信
@@ -11,7 +13,7 @@ hyper_parallel:
   reduce_comm_interval: 1   # 梯度归约通信的等待间隔，不是梯度累加步数
 ```
 
-`apply_hyper_parallel_patch` 由 VeOmni 在模型构建前自动调用，按配置启用 Hyper FSDP/HSDP 或 Muon，其余训练流程不变。
+`apply_hyper_parallel_patch` 由 VeOmni 在模型构建前自动调用，根据配置将 FSDP/HSDP 或 Muon 的构建入口切换到 Hyper 实现，并适配权重加载、梯度裁剪和 checkpoint 保存恢复所需的 DTensor 转换；数据加载和训练循环仍由 VeOmni 管理。
 
 ## 如何补充结果
 
