@@ -12,18 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Process isolation, shared-storage ownership and consumed-cursor recovery."""
+"""Process isolation, inline-storage ownership and consumed-cursor recovery."""
 
 import os
 import unittest
 from collections.abc import Iterator
 from contextlib import closing
+from multiprocessing.reduction import ForkingPickler
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
+from hyper_parallel.distributed_data import (
+    DistributedDatasetConfig,
+    SampleMetadata,
+    build_distributed_dataloader,
+)
+from hyper_parallel.distributed_data.process_data import (
+    _child_environment,
+    _decode_host_batch,
+    _encode_host_batch,
+)
 
-from hyper_parallel.distributed_data import DistributedDatasetConfig, SampleMetadata, build_distributed_dataloader
-from hyper_parallel.distributed_data.shared_batch import SharedBatchReader, SharedBatchWriter
 from tests.common.mark_utils import arg_mark
 
 
@@ -78,27 +88,6 @@ def _loader(source):
     )
 
 
-class TestSharedBatch(unittest.TestCase):
-    """Ensure subsequent publications cannot mutate previously received tensors."""
-
-    @arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="onecard", essential_mark="essential")
-    def test_growth_reuse_empty_and_noncontiguous_tensors(self):
-        """Feature: External data process and recovery.
-        Description: Retain mixed dtype batches while reusing and growing the sender's buffers.
-        Expectation: All ownership, exact-value and lifecycle assertions pass.
-        """
-        with closing(SharedBatchWriter()) as writer, closing(SharedBatchReader()) as reader:
-            sample = {"x": torch.arange(12).view(3, 4).t(), "y": (torch.tensor(True), torch.empty(0)), "z": None}
-            first = reader.read(writer.write(sample))
-            for size in (1, 2048, 2):
-                current = reader.read(writer.write({"x": torch.full((size,), -1, dtype=torch.int64)}))
-                self.assertEqual(current["x"].tolist(), [-1] * size)
-                torch.testing.assert_close(first["x"], sample["x"])
-            self.assertEqual(first["y"][0].item(), True)
-            self.assertEqual(first["y"][1].numel(), 0)
-            self.assertIsNone(first["z"])
-
-
 class TestProcessProducer(unittest.TestCase):
     """Use real CPU subprocesses without initializing distributed communication."""
 
@@ -144,9 +133,9 @@ class TestProcessProducer(unittest.TestCase):
             self.assertIsNone(loader._producer)
 
     @arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="onecard", essential_mark="essential")
-    def test_killed_producer_reclaims_shared_storage(self):
+    def test_killed_producer_reclaims_temporary_files(self):
         """Feature: External data process and recovery.
-        Description: Report a disconnected producer and unlink even its child-owned files.
+        Description: Retain the ready batch and reclaim startup/checkpoint files after failure.
         Expectation: All ownership, exact-value and lifecycle assertions pass.
         """
         steps = [[[{"values": torch.arange(4)}]]] * 4
@@ -154,8 +143,9 @@ class TestProcessProducer(unittest.TestCase):
         try:
             next(loader)
             loader.wait_for_prefetch()
-            shared_directory = Path(loader._producer._shared_directory)
-            self.assertTrue(list(shared_directory.rglob("*")))
+            producer_directory = Path(loader._producer._directory)
+            self.assertTrue(list(producer_directory.rglob("*")))
+            self.assertFalse(loader.last_host_batch[0]["values"].is_shared())
             loader._producer._process.kill()
             loader._producer._process.wait(timeout=10)
             # The already received speculative result remains valid.
@@ -164,7 +154,7 @@ class TestProcessProducer(unittest.TestCase):
                 next(loader)
         finally:
             loader.close()
-        self.assertFalse(shared_directory.exists())
+        self.assertFalse(producer_directory.exists())
 
     @arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="onecard", essential_mark="essential")
     def test_missing_source_checkpoint_contract(self):
@@ -201,3 +191,52 @@ class TestProcessProducer(unittest.TestCase):
             state["config"]["min_balance_gain"] = 0.9
             with self.assertRaisesRegex(ValueError, "same configuration"):
                 loader.load_state_dict(state)
+
+
+class TestInlineCpuBatch(unittest.TestCase):
+    """Check metadata byte fidelity and independently owned storage."""
+
+    @arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="onecard", essential_mark="essential")
+    def test_round_trip_preserves_bits_and_storage_ownership(self):
+        """Feature: Inline CPU metadata.
+        Description: Serialize scalar, empty, BF16 and noncontiguous tensor leaves.
+        Expectation: Values retain their bits and the receiver owns independent storage.
+        """
+        batch = {
+            "view": torch.arange(24, dtype=torch.int64).reshape(4, 6)[:, ::2],
+            "bf16": torch.tensor([1.5, -2.25], dtype=torch.bfloat16),
+            "scalar": torch.tensor(True),
+            "empty": torch.empty((2, 0), dtype=torch.float32),
+            "metadata": {"lengths": [3, 4], "optional": None},
+        }
+        message = _encode_host_batch(batch)
+        self.assertTrue(all(isinstance(item, bytes) for item in message[1]))
+        result = _decode_host_batch(ForkingPickler.loads(ForkingPickler.dumps(message)))
+        for key in ("view", "bf16", "scalar", "empty"):
+            torch.testing.assert_close(result[key], batch[key], rtol=0, atol=0)
+            self.assertFalse(result[key].is_shared())
+        self.assertEqual(result["metadata"], batch["metadata"])
+        expected = result["view"].clone()
+        batch["view"].fill_(99)
+        torch.testing.assert_close(result["view"], expected, rtol=0, atol=0)
+
+
+class TestProducerEnvironment(unittest.TestCase):
+    """Validate listener isolation without requiring an accelerator runtime."""
+
+    @arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="onecard", essential_mark="essential")
+    def test_child_port_override_and_parent_environment(self):
+        """Feature: Independent HCCL process.
+        Description: Configure child listener ports and reject invalid or overlapping ranges.
+        Expectation: The parent environment stays unchanged and only a disjoint range is accepted.
+        """
+        with patch.dict(os.environ, {"HCCL_NPU_SOCKET_PORT_RANGE": "40000-40031",
+                                     "HP_DATA_HCCL_SOCKET_PORT_RANGE": "50000-50031"}):
+            self.assertEqual(_child_environment("hccl")["HCCL_NPU_SOCKET_PORT_RANGE"], "50000-50031")
+            self.assertEqual(os.environ["HCCL_NPU_SOCKET_PORT_RANGE"], "40000-40031")
+            self.assertEqual(_child_environment("gloo")["HCCL_NPU_SOCKET_PORT_RANGE"], "40000-40031")
+        for value in ("0-31", "50000-65536", "invalid", "40016-40047"):
+            with patch.dict(os.environ, {"HCCL_NPU_SOCKET_PORT_RANGE": "40000-40031",
+                                         "HP_DATA_HCCL_SOCKET_PORT_RANGE": value}):
+                with self.assertRaises(ValueError):
+                    _child_environment("hccl")

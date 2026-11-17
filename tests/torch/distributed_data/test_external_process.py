@@ -38,3 +38,12 @@ def test_external_process_hccl():
     Expectation: All ownership, exact-value and lifecycle assertions pass.
     """
     torchrun_case(file_name=_WORKER, case_name="test_external_process_hccl", num_proc=4)
+
+
+@arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="allcards", essential_mark="essential")
+def test_external_process_gloo_file_store():
+    """Feature: Independent data-process rendezvous.
+    Description: Recover DP2 x CP2 loading through the parent's shared-file store.
+    Expectation: Launcher TCP settings do not redirect child communication to another store.
+    """
+    torchrun_case(file_name=_WORKER, case_name="test_external_process_gloo_file_store", num_proc=4)

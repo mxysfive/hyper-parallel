@@ -19,45 +19,27 @@ the candidate's relative objective improvement is strictly greater than
 retain the original distribution. Metadata gathering and planning still occur
 when sample exchange is skipped.
 
-With HCCL, source loading starts one step ahead. Metadata and payload
-collectives are issued by the training thread on an independent data stream;
-control and payload groups are separate from model groups. CPU planning,
-decoding and collation run in the producer. H2D uses a copy stream, and the
-consumer waits on its ready event without a host event synchronization.
-Pinned copy sources are retained until completion, including early close.
-Gloo keeps its complete background producer.
+Source loading starts one step ahead automatically. Metadata/payload collectives,
+CPU planning, decoding, collation, pinning and H2D run in an independent data
+process. Its process group is separate from model groups, and it has its own
+accelerator context. The parent receives device IPC handles and inline CPU
+fields through a pipe, then copies the device tensors into independently owned
+storage. No Python communication thread or HP CPU shared batch buffer is used.
 
-To overlap the full pipeline with model computation, call the two optional
-hooks on **every rank at the same training boundaries**:
+`next(loader)` starts the next request before returning the current batch, so
+prefetch overlaps the following forward/backward. `prefetch_plan()` and
+`prefetch()` are idempotent compatibility hooks for that same request; they do
+not defer work to a later training boundary. The first step has no prior compute
+to overlap. Source exhaustion stops speculative work. To limit iteration,
+truncate the external source before wrapping it. A stateless `itertools.islice`
+wrapper disables checkpointing; use a stateful source for resumable training.
+All ranks must still consume equal step counts.
 
-```python
-for microbatches in loader:
-    for index, batch in enumerate(microbatches):
-        loss = forward(batch)
-        if index == 0:
-            loader.prefetch_plan()  # HCCL metadata, then background CPU planner
-        loss.backward()
-        if index == 0:
-            loader.prefetch()       # HCCL plan/payload, then decode/collate/H2D
-        log_loss(loss.item())       # Host synchronization belongs after launch
-```
-
-`prefetch()` completes `prefetch_plan()` if needed; repeated calls before
-consumption do not advance the source twice. Ordinary `next(loader)` also
-completes omitted hooks, preserving the iteration contract. Without early
-hooks, accelerator data exchange starts only when the batch is requested.
-The first step has no prior compute to overlap. Source exhaustion stops
-speculative work. To limit iteration, truncate the external source before
-wrapping it. A stateless `itertools.islice` wrapper disables checkpointing;
-use a stateful source for resumable training. All ranks
-must still consume equal step counts.
-
-Launch these hooks while previously submitted device computation is still
-pending. A separate group alone does not create overlap: using the model's
-current stream, calling device-wide synchronization, or launching after a
-blocking loss read can remove that window. Metadata sizes and the plan still
-need to reach the host, and payload encoding/split exchange run on the caller;
-the amount hidden depends on the remaining compute and shared bandwidth.
+HCCL listeners must be distinct from the training process. The child uses
+`50000-50031` by default; `HP_DATA_HCCL_SOCKET_PORT_RANGE` selects a different
+inclusive range. CPU/Gloo and Gloo with explicit CUDA/NPU output use the same
+process pipeline. PyTorch DataLoader workers remain controlled by the external
+source and may use their own CPU shared memory.
 
 ## External-step integration
 
@@ -128,10 +110,11 @@ with closing(build_distributed_dataloader(
 - Iteration returns ready device microbatches. The loader waits on the copy
   event and records storage on the consumer stream internally. No explicit
   device-consumption hook or application-side H2D is needed.
-  `loader.last_host_batch` on each DP constructor retains the corresponding CPU microbatches for
-  optional host-only metering without D2H. Moving previously CPU-only metering
-  to the device outputs may introduce synchronization; use that host view if
-  needed. A dataloader cannot remove device-wide waits from an existing trainer.
+  `loader.last_host_batch` on each DP constructor fetches a CPU snapshot on
+  explicit access for debugging; it can wait for pending prefetch. Compute
+  metering summaries in the producer and include those small values in the
+  returned batch instead of fetching the complete Host snapshot every step.
+  A dataloader cannot remove device-wide waits from an existing trainer.
 
 ## Runtime contract
 

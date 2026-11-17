@@ -145,16 +145,24 @@ model the synchronized forward/backward rounds.
 ## Prefetch and variable model inputs
 
 External loading buffers one future step. Source reads, metadata generation,
-planning, payload encoding/decoding and collation run in the CPU producer.
-A lightweight parent thread serves serialized tensor collectives on an
-independent data stream, then pins/stages the final batch on the copy stream.
+planning, payload encoding/decoding, collation, collectives and H2D run in one
+independent data process. The training process receives the prepared result
+without a Python communication thread. Gloo communication remains on CPU;
+HCCL uses the producer's NPU context. CUDA and NPU outputs use device IPC.
 HCCL control gathering downloads the complete length result once and the
 complete padded payload once, independent of the number of readers.
-CPU tensor payloads cross the process boundary through growable shared-memory
-buffers; the pipe carries layout descriptors. Full source state is transferred
-only for explicit checkpoint save/load. Consuming a device batch waits on its
-copy event, and each delivered CPU batch has storage independent of later
-shared-buffer reuse.
+CPU tensor fields use inline bytes over a pipe. The parent clones device IPC
+tensors and retains their source handles until the copy completes, so delivered
+batches remain usable after producer shutdown. Full source state is transferred
+only for explicit checkpoint save/load. No HP CPU shared batch buffer is allocated;
+an external PyTorch DataLoader may still use its own worker shared memory.
+
+Multiple data processes reuse the training TCPStore or FileStore under a unique
+prefix. HCCL listeners in the child use ports `50000-50031` by default; set
+`HP_DATA_HCCL_SOCKET_PORT_RANGE` to another inclusive range when required by the
+deployment. It must not overlap the training process's
+`HCCL_NPU_SOCKET_PORT_RANGE`. Source callbacks must remain CPU-only before the
+final device-transfer callback.
 
 For external sources, dict/list/tuple trees of dense tensors and
 `None/bool/int/float/str` values can change shape and structure on every step.
@@ -168,8 +176,12 @@ An optional `model_batch_spec` avoids dynamic tree serialization. Native custom
 MP batches require that fixed declaration; see `TensorFieldSpec` in
 [`model_batch.py`](model_batch.py). Pure-DP loading does not need a declaration.
 
-`last_host_batch` and `last_balance_stats` are available on constructors for
-host-side metering; non-constructor model peers do not keep those views.
+`last_balance_stats` is available on constructors. `last_host_batch` fetches
+an independent CPU snapshot only when explicitly accessed; it may wait for
+pending prefetch and is intended for debugging, not per-step metering.
+Normal iteration sends only CPU fields retained by `batch_to_device_fn` as
+inline bytes, alongside device IPC handles. It does not publish the complete
+CPU batch through shared memory. Non-constructors return `None` for that snapshot.
 `config.log_balance=True` enables INFO reports on rank zero. Source and planner
 errors are forwarded to model peers, but data-plane failures remain subject to
 the distributed process-group timeout: all readers must have valid inputs and

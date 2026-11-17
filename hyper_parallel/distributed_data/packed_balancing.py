@@ -38,7 +38,11 @@ from hyper_parallel.distributed_data.device_prefetch import (
 from hyper_parallel.distributed_data.locality import _create_locality_groups
 from hyper_parallel.distributed_data.mesh_loading import MeshBalancingDataLoader
 from hyper_parallel.distributed_data.planner import DynamicPackingPlanner
-from hyper_parallel.distributed_data.process_data import ProcessDataProducer, _cpu_rng_state, _restore_cpu_rng
+from hyper_parallel.distributed_data.process_data import (
+    ProcessDataProducer,
+    _cpu_rng_state,
+    _restore_cpu_rng,
+)
 from hyper_parallel.distributed_data.schema import (
     DistributedPackingPlan,
     PackingConstraints,
@@ -295,7 +299,7 @@ class _LocalStepProducer:
 
 
 class LocalBalancingDataLoader(Iterator[Any]):
-    """Balance external steps in a CPU process with parent-owned collectives.
+    """Balance external steps with child-owned communication and staging.
 
     The source and callbacks must be serializable before iteration starts and
     must produce CPU data. One speculative step overlaps training, including
@@ -317,7 +321,6 @@ class LocalBalancingDataLoader(Iterator[Any]):
         self._topology = topology
         self.prefetches_to_device = device_prefetch is not None
         self.last_balance_stats = None
-        self.last_host_batch = None
         self._transport = transport
         self._global_rank = global_rank
         self._device_prefetch = device_prefetch
@@ -336,6 +339,11 @@ class LocalBalancingDataLoader(Iterator[Any]):
         if self._producer is None:
             self._producer = ProcessDataProducer(self._factory, self._transport, self._device_prefetch)
         return self._producer
+
+    @property
+    def last_host_batch(self) -> Any:
+        """Fetch the constructor's CPU batch on demand for debugging."""
+        return self._producer.last_host_batch if self._producer is not None else None
 
     def __iter__(self) -> LocalBalancingDataLoader:
         """Keep repeated iteration at the same delivered cursor."""
@@ -372,7 +380,6 @@ class LocalBalancingDataLoader(Iterator[Any]):
         self._step += 1
         self._resuming = False
         self.last_balance_stats = stats
-        self.last_host_batch = self._producer.last_host_batch
         if self.prefetches_to_device:
             batch = batch.take_batch()
         if stats is not None and self._balance_stats_callback is not None and self._global_rank == 0:
@@ -402,7 +409,7 @@ class LocalBalancingDataLoader(Iterator[Any]):
             self._device_prefetch.close()
         self._step, self._epoch = 0, epoch
         self._finished = self._resuming = False
-        self.last_balance_stats = self.last_host_batch = None
+        self.last_balance_stats = None
 
     def _checkpoint_config(self) -> dict[str, Any]:
         """Separate communication placement from the source/packing identity."""
@@ -444,10 +451,10 @@ class LocalBalancingDataLoader(Iterator[Any]):
         self._step, self._epoch = iterator["step"], state["epoch"]
         self._finished = iterator["finished"]
         self._resuming = True
-        self.last_balance_stats = self.last_host_batch = None
+        self.last_balance_stats = None
 
     def close(self) -> None:
-        """Stop owned CPU workers after pending communication and H2D complete."""
+        """Stop owned data workers after pending communication and H2D complete."""
         try:
             if self._producer is not None:
                 self._producer.close()
@@ -455,7 +462,6 @@ class LocalBalancingDataLoader(Iterator[Any]):
             if self._device_prefetch is not None:
                 self._device_prefetch.close()
             self._finished = True
-            self.last_host_batch = None
 
 
 def build_local_balancing_dataloader(
@@ -506,8 +512,8 @@ def build_local_balancing_dataloader(
         The external source controls iteration length and all ranks must consume
         the same number of steps. Stateful sources support checkpoint/resume
         under the same mesh, including the unconsumed prefetched batch.
-        Iteration returns device-ready batches. last_host_batch retains the CPU
-        view for metering without a device-to-host copy.
+        Iteration returns device-ready batches. last_host_batch fetches the CPU
+        snapshot on demand for debugging, outside the normal training path.
     """
     if config.balance_window_size != 1:
         raise ValueError("balance_window_size > 1 requires a native batch_sampler.")

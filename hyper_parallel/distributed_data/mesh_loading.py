@@ -43,7 +43,6 @@ class MeshBalancingDataLoader:
         self._resuming = False
         self._epoch = 0
         self.last_balance_stats = None
-        self.last_host_batch = None
 
     @property
     def step(self) -> int:
@@ -53,6 +52,11 @@ class MeshBalancingDataLoader:
     def __len__(self) -> int:
         """Return the source's declared number of complete local steps."""
         return len(self._source)
+
+    @property
+    def last_host_batch(self) -> Any:
+        """Fetch the constructor's CPU batch on demand for debugging."""
+        return self._reader.last_host_batch if self._reader is not None else None
 
     def __iter__(self) -> MeshBalancingDataLoader:
         """Start or resume collective consumption without advancing model peers' sources."""
@@ -80,7 +84,6 @@ class MeshBalancingDataLoader:
         self._resuming = False
         if self._reader is not None:
             self.last_balance_stats = self._reader.last_balance_stats
-            self.last_host_batch = self._reader.last_host_batch
         return batch
 
     def prefetch_plan(self) -> None:
@@ -113,7 +116,6 @@ class MeshBalancingDataLoader:
         self._step = 0
         self._finished = False
         self.last_balance_stats = None
-        self.last_host_batch = None
 
     def _checkpoint_topology(self) -> tuple:
         topology = self._topology
@@ -144,14 +146,12 @@ class MeshBalancingDataLoader:
         self._epoch = state["epoch"]
         self._resuming = True
         self.last_balance_stats = None
-        self.last_host_batch = None
 
     def close(self) -> None:
         """Drain reader prefetch before releasing the iterator."""
         if self._reader is not None:
             self._reader.close()
         self._finished = True
-        self.last_host_batch = None
 
 
 __all__ = ["MeshBalancingDataLoader"]

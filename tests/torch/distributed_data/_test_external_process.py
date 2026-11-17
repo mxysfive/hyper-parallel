@@ -18,6 +18,8 @@ import os
 from collections.abc import Iterator
 from contextlib import closing
 from datetime import timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import torch
@@ -85,12 +87,15 @@ def _move(batch: list[dict[str, Any]], device: torch.device) -> list[dict[str, A
     return [{**item, "ids": item["ids"].to(device, non_blocking=True)} for item in batch]
 
 
-def _exercise(backend: str) -> None:
+def _exercise(backend: str, init_method: str | None = None) -> None:
     """Exercise the public builder, exact membership and pending recovery."""
     device = torch.device("npu", int(os.environ["LOCAL_RANK"])) if backend == "hccl" else torch.device("cpu")
     if device.type == "npu":
         torch.npu.set_device(device)
-    dist.init_process_group(backend, timeout=timedelta(seconds=120))
+    options = {} if init_method is None else {
+        "init_method": init_method, "rank": int(os.environ["RANK"]), "world_size": int(os.environ["WORLD_SIZE"]),
+    }
+    dist.init_process_group(backend, timeout=timedelta(seconds=120), **options)
     mesh = init_device_mesh(device.type, (2, 2), mesh_dim_names=("dp", "cp"))
     try:
         for broadcast_plan in (True, False):
@@ -137,3 +142,17 @@ def test_external_process_gloo():
 def test_external_process_hccl():
     """Run the same public builder and recovery checks over real NPU collectives."""
     _exercise("hccl")
+
+
+def test_external_process_gloo_file_store():
+    """Recover through a shared-file rendezvous instead of the launcher store."""
+    dist.init_process_group("gloo", timeout=timedelta(seconds=120))
+    directory = TemporaryDirectory(prefix="hp-data-test-") if dist.get_rank() == 0 else None
+    path = [str(Path(directory.name) / "store") if directory is not None else None]
+    dist.broadcast_object_list(path, src=0)
+    dist.destroy_process_group()
+    try:
+        _exercise("gloo", init_method="file://" + path[0])
+    finally:
+        if directory is not None:
+            directory.cleanup()
