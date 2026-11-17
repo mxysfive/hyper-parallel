@@ -2,6 +2,17 @@
 
 本文在 `docs/veomni-benchmark-report` 分支协作维护，汇总后同步到 [Gist 报告](https://gist.github.com/Cui-yshoho/5a912d774a3693815387fb635b5e46d3)。
 
+```yaml
+hyper_parallel:
+  comm_fusion: false        # 将参数/梯度打包到 buffer，进行融合通信
+  comm_fusion_vit: null     # 单独控制视觉塔的通信融合；null 表示继承 comm_fusion
+  forward_prefetch_depth: 1 # 前向预取后续 block 的数量，需开启 forward_prefetch
+  backward_prefetch_depth: 1 # 反向预取前面 block 的数量
+  reduce_comm_interval: 1   # 梯度归约通信的等待间隔，不是梯度累加步数
+```
+
+`apply_hyper_parallel_patch` 由 VeOmni 在模型构建前自动调用，按配置启用 Hyper FSDP/HSDP 或 Muon，其余训练流程不变。
+
 ## 如何补充结果
 
 - PR 的目标仓库选择 `Cui-yshoho/hyper-parallel`，目标分支选择 `docs/veomni-benchmark-report`。
