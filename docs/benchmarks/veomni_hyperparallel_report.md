@@ -1,5 +1,7 @@
 # HyperParallel × VeOmni 训练实验报告
 
+<!-- markdownlint-configure-file {"MD033": {"allowed_elements": ["img"]}} -->
+
 本文在 `docs/veomni-benchmark-report` 分支协作维护，汇总后同步到 [Gist 报告](https://gist.github.com/Cui-yshoho/5a912d774a3693815387fb635b5e46d3)。
 
 ## HyperParallel 接入配置
@@ -79,51 +81,109 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 ### 4机64die
 
-配置：待补充。
+基于 VeOmni 官方 example：[AdamW](https://github.com/ByteDance-Seed/VeOmni/blob/main/configs/multimodal/qwen3_5_moe/qwen3_5_moe_vl_ascendc.yaml)、[Muon](https://github.com/ByteDance-Seed/VeOmni/blob/main/configs/multimodal/qwen3_5_moe/qwen3_5_moe_vl_muon_ascendc.yaml)，加载完整预训练权重，其余模型、算子及优化器配置沿用对应 example。
 
-数据：待补充。
+数据：Tulu-3 SFT、ShareGPT4V COCO图文128条、LLaVA视频10条，权重依次为0.2、0.4、0.4；图文和视频重复采样。
 
 环境变量：`CPU_AFFINITY_CONF=2`、`TASK_QUEUE_ENABLE=2`、`PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`。
 
+#### HSDP shard=32，replicate=2
+
 ```text
 64die，SP=1，EP=1，HSDP shard=32，replicate=2
-每rank序列长度16K
+完全重算（非重入），max_seq_len=16384，pad_to_length=false
+micro batch size=1，梯度累加数=1，GBS=64；每组100步
 ```
 
-#### 实验情况
+##### 实验情况
 
-| 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated / reserved（GiB） | 显存节省 allocated / reserved（%） |
+| 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated（GiB） | 显存节省 allocated（%） |
 | --- | --- | --- | --- | --- | --- |
-| 16K | **VeOmni FSDP2＋AdamW（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 16K | Hyper HSDP＋AdamW | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
-| 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 16K | Hyper HSDP＋Hyper Muon std | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
+| 16K | **VeOmni FSDP2＋AdamW（基线）** | 15.00 | — | 35.34 | — |
+| 16K | Hyper HSDP＋AdamW | 13.47 | 11.35 | 35.38 | -0.11 |
+| 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 15.94 | — | 31.37 | — |
+| 16K | Hyper HSDP＋Hyper Muon std | 13.69 | 16.48 | 30.68 | 2.20 |
 
-#### Profiling
+##### Profiling
 
-##### 16K · VeOmni FSDP2＋AdamW
+###### 16K · VeOmni FSDP2＋AdamW
 
-截图待补充。
+<img src="assets/veomni/profile_64die_16k_hsdp_native_adamw.png" alt="64die HSDP VeOmni FSDP2＋AdamW step profiling" width="900">
 
-##### 16K · Hyper HSDP＋AdamW
+###### 16K · Hyper HSDP＋AdamW
 
-截图待补充。
+<img src="assets/veomni/profile_64die_16k_hsdp_hyper_adamw.png" alt="64die HSDP Hyper HSDP＋AdamW step profiling" width="900">
 
-##### 16K · VeOmni FSDP2＋VeOmni Muon std
+###### 16K · VeOmni FSDP2＋VeOmni Muon std
 
-截图待补充。
+<img src="assets/veomni/profile_64die_16k_hsdp_native_muon_std.png" alt="64die HSDP VeOmni FSDP2＋VeOmni Muon std step profiling" width="900">
 
-##### 16K · Hyper HSDP＋Hyper Muon std
+<img src="assets/veomni/profile_64die_16k_hsdp_native_muon_std_optimizer.png" alt="64die HSDP VeOmni Muon std optimizer profiling" width="900">
 
-截图待补充。
+###### 16K · Hyper HSDP＋Hyper Muon std
 
-#### 精度对比
+<img src="assets/veomni/profile_64die_16k_hsdp_hyper_muon_std.png" alt="64die Hyper HSDP＋Hyper Muon std step profiling" width="900">
 
-##### 16K
+<img src="assets/veomni/profile_64die_16k_hsdp_hyper_muon_std_optimizer.png" alt="64die Hyper HSDP Hyper Muon std optimizer profiling" width="900">
 
-VeOmni FSDP2＋AdamW / Hyper HSDP＋AdamW loss对比图：待补充。
+##### 精度对比
 
-VeOmni FSDP2＋VeOmni Muon std / Hyper HSDP＋Hyper Muon std loss对比图：待补充。
+VeOmni FSDP2＋AdamW / Hyper HSDP＋AdamW
+
+![VeOmni FSDP2＋AdamW / Hyper HSDP＋AdamW loss对比](assets/veomni/loss_64die_16k_hsdp_adamw.svg)
+
+VeOmni FSDP2＋VeOmni Muon std / Hyper HSDP＋Hyper Muon std
+
+![VeOmni FSDP2＋VeOmni Muon std / Hyper HSDP＋Hyper Muon std loss对比](assets/veomni/loss_64die_16k_hsdp_muon_std.svg)
+
+#### FSDP shard=64，replicate=1
+
+```text
+64die，SP=1，EP=1，FSDP shard=64，replicate=1
+完全重算（非重入），max_seq_len=16384，pad_to_length=false
+micro batch size=1，梯度累加数=1，GBS=64；每组100步
+```
+
+##### 实验情况
+
+| 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated（GiB） | 显存节省 allocated（%） |
+| --- | --- | --- | --- | --- | --- |
+| 16K | **VeOmni FSDP2＋AdamW（基线）** | 15.59 | — | 27.83 | — |
+| 16K | Hyper FSDP＋AdamW | 13.41 | 16.23 | 27.86 | -0.11 |
+| 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 15.82 | — | 25.85 | — |
+| 16K | Hyper FSDP＋Hyper Muon std | 13.75 | 15.12 | 25.87 | -0.08 |
+
+##### Profiling
+
+###### 16K · VeOmni FSDP2＋AdamW
+
+<img src="assets/veomni/profile_64die_16k_fsdp_native_adamw.png" alt="64die FSDP VeOmni FSDP2＋AdamW step profiling" width="900">
+
+###### 16K · Hyper FSDP＋AdamW
+
+<img src="assets/veomni/profile_64die_16k_fsdp_hyper_adamw.png" alt="64die FSDP Hyper FSDP＋AdamW step profiling" width="900">
+
+###### 16K · VeOmni FSDP2＋VeOmni Muon std
+
+<img src="assets/veomni/profile_64die_16k_fsdp_native_muon_std.png" alt="64die FSDP VeOmni FSDP2＋VeOmni Muon std step profiling" width="900">
+
+<img src="assets/veomni/profile_64die_16k_fsdp_native_muon_std_optimizer.png" alt="64die FSDP VeOmni Muon std optimizer profiling" width="900">
+
+###### 16K · Hyper FSDP＋Hyper Muon std
+
+<img src="assets/veomni/profile_64die_16k_fsdp_hyper_muon_std.png" alt="64die Hyper FSDP＋Hyper Muon std step profiling" width="900">
+
+<img src="assets/veomni/profile_64die_16k_fsdp_hyper_muon_std_optimizer.png" alt="64die Hyper FSDP Hyper Muon std optimizer profiling" width="900">
+
+##### 精度对比
+
+VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
+
+![VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW loss对比](assets/veomni/loss_64die_16k_fsdp_adamw.svg)
+
+VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
+
+![VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比](assets/veomni/loss_64die_16k_fsdp_muon_std.svg)
 
 ## 实验二：Qwen3.8-Flash-Next
 
