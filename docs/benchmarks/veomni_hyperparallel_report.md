@@ -29,14 +29,14 @@ micro batch size=1，梯度累加数=1，GBS=16；每组100步
 
 | 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated / reserved（GiB） | 显存节省 allocated / reserved（%） |
 | --- | --- | --- | --- | --- | --- |
-| 8K | **VeOmni FSDP2＋AdamW（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 8K | Hyper FSDP＋AdamW | 5.8394 | 待补充 | 47.34 / 50.70 | 待补充 / 待补充 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 8K | Hyper FSDP＋Hyper Muon std | 6.0993 | 待补充 | 39.40 / 42.66 | 待补充 / 待补充 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 8K | Hyper FSDP＋Hyper Muon gram_quack | 6.1949 | 待补充 | 39.40 / 42.74 | 待补充 / 待补充 |
+| 8K | **VeOmni FSDP2＋AdamW（基线）** | 7.6753 | — | 47.24 / 54.99 | — / — |
+| 8K | Hyper FSDP＋AdamW | 5.8394 | 31.44 | 47.34 / 50.70 | -0.21 / 7.80 |
+| 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 7.8928 | — | 39.30 / 47.13 | — / — |
+| 8K | Hyper FSDP＋Hyper Muon std | 6.0993 | 29.40 | 39.40 / 42.66 | -0.25 / 9.48 |
+| 8K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 7.9489 | — | 39.30 / 47.11 | — / — |
+| 8K | Hyper FSDP＋Hyper Muon gram_quack | 6.1949 | 28.31 | 39.40 / 42.74 | -0.25 / 9.28 |
 
-单步耗时取两次结果的均值，峰值显存取两次最大值。
+基线各完成1次，Hyper各完成2次；耗时取已完成结果的均值，显存取最大值。耗时为训练计算区间的CPU墙钟统计，不含数据加载及profiling。
 
 VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
@@ -44,7 +44,7 @@ VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
 ##### 8K · VeOmni FSDP2＋AdamW
 
-待采集。
+已采集，截图待补充。
 
 ##### 8K · Hyper FSDP＋AdamW
 
@@ -52,7 +52,7 @@ VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
 ##### 8K · VeOmni FSDP2＋VeOmni Muon std
 
-待采集。
+已采集，截图待补充。
 
 ##### 8K · Hyper FSDP＋Hyper Muon std
 
@@ -60,7 +60,7 @@ VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
 ##### 8K · VeOmni FSDP2＋VeOmni Muon gram
 
-待采集。
+已采集，截图待补充。
 
 ##### 8K · Hyper FSDP＋Hyper Muon gram_quack
 
@@ -72,15 +72,15 @@ VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
 VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
-loss对比图：待本轮基线完成后更新。
+![VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW loss对比](assets/veomni/loss_16die_8k_adamw.svg)
 
 VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
-loss对比图：待本轮基线完成后更新。
+![VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比](assets/veomni/loss_16die_8k_muon_std.svg)
 
 VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack
 
-loss对比图：待本轮基线完成后更新。
+![VeOmni FSDP2＋VeOmni Muon gram / Hyper FSDP＋Hyper Muon gram_quack loss对比](assets/veomni/loss_16die_8k_muon_gram.svg)
 
 ### 4机64die
 
