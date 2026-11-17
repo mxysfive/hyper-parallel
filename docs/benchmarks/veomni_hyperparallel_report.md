@@ -29,14 +29,12 @@ micro batch size=1，梯度累加数=1，GBS=16；每组100步
 
 | 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated / reserved（GiB） | 显存节省 allocated / reserved（%） |
 | --- | --- | --- | --- | --- | --- |
-| 8K | **VeOmni FSDP2＋AdamW（基线）** | 7.6753 | — | 47.24 / 54.99 | — / — |
-| 8K | Hyper FSDP＋AdamW | 5.8394 | 31.44 | 47.34 / 50.70 | -0.21 / 7.80 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 7.8928 | — | 39.30 / 47.13 | — / — |
-| 8K | Hyper FSDP＋Hyper Muon std | 6.0993 | 29.40 | 39.40 / 42.66 | -0.25 / 9.48 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 7.9489 | — | 39.30 / 47.11 | — / — |
-| 8K | Hyper FSDP＋Hyper Muon gram_quack | 6.1949 | 28.31 | 39.40 / 42.74 | -0.25 / 9.28 |
-
-基线各完成1次，Hyper各完成2次；耗时取已完成结果的均值，显存取最大值。耗时为训练计算区间的CPU墙钟统计，不含数据加载及profiling。
+| 8K | **VeOmni FSDP2＋AdamW（基线）** | 7.6849 | — | 47.24 / 54.99 | — / — |
+| 8K | Hyper FSDP＋AdamW | 5.8394 | 31.61 | 47.34 / 50.70 | -0.21 / 7.80 |
+| 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 7.8723 | — | 39.30 / 47.13 | — / — |
+| 8K | Hyper FSDP＋Hyper Muon std | 6.0993 | 29.07 | 39.40 / 42.66 | -0.25 / 9.48 |
+| 8K | **VeOmni FSDP2＋VeOmni Muon gram（基线）** | 7.9240 | — | 39.30 / 47.11 | — / — |
+| 8K | Hyper FSDP＋Hyper Muon gram_quack | 6.1949 | 27.91 | 39.40 / 42.74 | -0.25 / 9.28 |
 
 VeOmni native Muon在NPU上配置 `gram_quack` 时会回退到 `gram`。
 
