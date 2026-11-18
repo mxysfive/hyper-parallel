@@ -226,3 +226,44 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 ![VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW loss对比](assets/veomni/loss_128die_16k_adamw.svg)
 
 ![VeOmni Muon std / Hyper Muon std loss 对比](assets/veomni/loss_128die_16k_muon_std_prefetch1.svg)
+
+## 实验三：Qwen3-VL-30B-A3B
+
+配置：加载完整的 Qwen3-VL-30B-A3B-Instruct 预训练权重，使用 VeOmni AdamW（学习率 1e-5、cosine 衰减、weight decay 0、梯度裁剪 1.0）；FSDP 混合精度的参数和梯度归约均为 BF16。VeOmni 使用 `b0f4e893`，HyperParallel 使用 `ada54bd4`。
+
+Hyper 的 `comm_fusion` 默认关闭，通过启动策略仅对 27 个 ViT block 单独设置 `comm_fusion=True`；前向、反向预取深度均为 1。
+
+数据：Tulu-3 SFT 纯文本对话，过滤超过 2K token 的单条会话后重复采样，动态打包且不补齐；ViT 执行 dummy forward。表中长度为每 rank 的打包 token 上限，并非单条会话长度；随机种子 42。
+
+运行时按 rank 绑核；环境变量：`TASK_QUEUE_ENABLE=2`、`PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`、`MULTI_STREAM_MEMORY_REUSE=2`。
+
+### 单机16die
+
+```text
+16 die Ascend 910C，SP=1，EP=8，FSDP shard=16，replicate=1
+完全重算（非重入），每 rank 打包上限 2K / 4K / 8K / 16K / 32K
+micro batch size=1，每步一个 microbatch，GBS=16；每组 100 步
+```
+
+#### 实验情况
+
+单步耗时按第 23–100 步统计；性能提升按 Torch 步时 / Hyper 步时 − 1 计算。峰值显存为 rank 0 的 allocated 值。
+
+| 打包上限 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated（GiB） | 显存节省 allocated（%） |
+| --- | --- | --- | --- | --- | --- |
+| 2K | **VeOmni FSDP2＋AdamW（基线）** | 1.8561 | — | 31.77 | — |
+| 2K | Hyper FSDP＋AdamW | 1.6933 | 9.61 | 28.97 | 8.81 |
+| 4K | **VeOmni FSDP2＋AdamW（基线）** | 2.3905 | — | 31.78 | — |
+| 4K | Hyper FSDP＋AdamW | 2.1628 | 10.53 | 28.97 | 8.84 |
+| 8K | **VeOmni FSDP2＋AdamW（基线）** | 3.5626 | — | 32.69 | — |
+| 8K | Hyper FSDP＋AdamW | 3.3393 | 6.69 | 29.64 | 9.33 |
+| 16K | **VeOmni FSDP2＋AdamW（基线）** | 5.9190 | — | 34.74 | — |
+| 16K | Hyper FSDP＋AdamW | 5.6950 | 3.93 | 32.00 | 7.89 |
+| 32K | **VeOmni FSDP2＋AdamW（基线）** | 10.7768 | — | 39.42 | — |
+| 32K | Hyper FSDP＋AdamW | 10.5733 | 1.92 | 39.06 | 0.91 |
+
+#### 精度对比
+
+VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW。Loss 按训练日志显示值绘制，保留两位小数。
+
+![Qwen3-VL-30B-A3B 不同打包长度的 loss 对比](assets/veomni/loss_16die_qwen3vl_ep8_seq.svg)
