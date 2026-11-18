@@ -1,0 +1,49 @@
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
+"""Thin launchers for the process producer's public Mesh integration."""
+
+from pathlib import Path
+
+from tests.common.distributed_launcher import torchrun_case
+from tests.common.mark_utils import arg_mark
+
+_WORKER = str(Path(__file__).with_name("_test_external_process.py"))
+
+
+@arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="allcards", essential_mark="essential")
+def test_external_process_gloo():
+    """Feature: External data process and recovery.
+    Description: Run DP2 x CP2 ownership, redistribution and resume on CPU.
+    Expectation: All ownership, exact-value and lifecycle assertions pass.
+    """
+    torchrun_case(file_name=_WORKER, case_name="test_external_process_gloo", num_proc=4)
+
+
+@arg_mark(plat_marks=["platform_ascend910b"], level_mark="level0", card_mark="allcards", essential_mark="essential")
+def test_external_process_hccl():
+    """Feature: External data process and recovery.
+    Description: Run DP2 x CP2 data communication and selective H2D on four NPUs.
+    Expectation: All ownership, exact-value and lifecycle assertions pass.
+    """
+    torchrun_case(file_name=_WORKER, case_name="test_external_process_hccl", num_proc=4)
+
+
+@arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="allcards", essential_mark="essential")
+def test_external_process_gloo_file_store():
+    """Feature: Independent data-process rendezvous.
+    Description: Recover DP2 x CP2 loading through the parent's shared-file store.
+    Expectation: Launcher TCP settings do not redirect child communication to another store.
+    """
+    torchrun_case(file_name=_WORKER, case_name="test_external_process_gloo_file_store", num_proc=4)
