@@ -249,8 +249,6 @@ micro batch size=1，每步一个 microbatch，GBS=16；每组 100 步
 
 #### 实验情况
 
-单步耗时按第 23–100 步统计；性能提升按 Torch 步时 / Hyper 步时 − 1 计算。峰值显存为 rank 0 的 allocated 值。
-
 | 打包上限 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated（GiB） | 显存节省 allocated（%） |
 | --- | --- | --- | --- | --- | --- |
 | 2K | **VeOmni FSDP2＋AdamW（基线）** | 1.8561 | — | 31.77 | — |
