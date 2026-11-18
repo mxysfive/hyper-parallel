@@ -22,7 +22,7 @@ import math
 from collections import deque
 from collections.abc import Iterator, Mapping
 from concurrent.futures import Future
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Thread
@@ -57,6 +57,7 @@ from hyper_parallel.distributed_data.schema import (
 )
 from hyper_parallel.distributed_data.topology import DataTopology
 from hyper_parallel.distributed_data.transport import (
+    DataGroups,
     DataPlaneTransport,
     ModelParallelTransport,
     PreparedPayloadExchange,
@@ -160,6 +161,7 @@ class DistributedDataLoader(Iterator[Any]):
             balance_window_size: int = 1,
             device_prefetch_depth: int = 1,
             device: Any = "cpu",
+            groups: DataGroups | None = None,
     ) -> None:
         """Store the fully validated runtime components."""
         _validate_loader_components(
@@ -181,6 +183,7 @@ class DistributedDataLoader(Iterator[Any]):
         self._planner = planner
         self._data_constructor = data_constructor
         self._data_plane = data_plane
+        self._groups = groups
         self._model_transport = model_transport
         self._device_prefetch = device_prefetch
         self._epoch = initial_epoch
@@ -488,26 +491,33 @@ class DistributedDataLoader(Iterator[Any]):
 
     def close(self) -> None:
         """Drain the producer before releasing buffered inputs and reader resources."""
-        if self._closed:
-            return
-        # Constructors may have skipped optional staging at different times.
-        # Complete the requested lookahead before any producer leaves its collectives;
-        # discarded input errors still belong to next()/wait_for_prefetch(), not close().
-        self._fill_requested_device_prefetch()
-        if self._last_ready_event is not None:
-            self._last_ready_event.synchronize()
-        if self._prefetch_thread is not None:
-            if self._prefetch_thread.is_alive():
-                self._requests.put(None)
-            self._prefetch_thread.join()
-            self._prefetch_thread = None
         try:
-            if self._device_prefetch is not None:
-                self._device_prefetch.close()
+            with ExitStack() as cleanup:
+                if self._groups is not None:
+                    cleanup.callback(self._groups.close)
+                if self._closed:
+                    return
+                if self._direct_sample_loader is not None:
+                    cleanup.callback(self._direct_sample_loader.close)
+                reader = self._planning_reader()
+                if reader is not None:
+                    cleanup.callback(reader.close)
+                if self._device_prefetch is not None:
+                    cleanup.callback(self._device_prefetch.close)
+                try:
+                    # Constructors may have skipped optional staging at different times.
+                    # Complete the requested lookahead before any producer leaves its collectives;
+                    # discarded input errors still belong to next()/wait_for_prefetch(), not close().
+                    self._fill_requested_device_prefetch()
+                    if self._last_ready_event is not None:
+                        self._last_ready_event.synchronize()
+                finally:
+                    if self._prefetch_thread is not None:
+                        if self._prefetch_thread.is_alive():
+                            self._requests.put(None)
+                        self._prefetch_thread.join()
+                        self._prefetch_thread = None
         finally:
-            reader = self._planning_reader()
-            if reader is not None:
-                reader.close()
             self._current = None
             self._future = None
             self._device_batches.clear()

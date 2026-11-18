@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import os
 import socket
-from dataclasses import replace
 from typing import Any
 
 import torch.distributed as dist  # pylint: disable=forbidden-backend-import
@@ -27,6 +26,7 @@ import torch.distributed as dist  # pylint: disable=forbidden-backend-import
 from hyper_parallel.distributed_data.topology import DataTopology
 from hyper_parallel.distributed_data.transport import (
     DataGroups,
+    _create_data_plane_process_groups,
     _create_model_parallel_process_groups,
     all_gather_control_object,
 )
@@ -105,7 +105,11 @@ def _gather_startup_statuses(
     startup_group = None
     if backend == "gloo":
         startup_group = dist.new_group(ranks=list(range(dist.get_world_size())), backend="gloo")
-    return list(all_gather_control_object(status, group=startup_group, device=device, backend=backend))
+    try:
+        return list(all_gather_control_object(status, group=startup_group, device=device, backend=backend))
+    finally:
+        if startup_group is not None:
+            dist.destroy_process_group(startup_group)
 
 
 def _create_locality_groups(
@@ -147,26 +151,27 @@ def _create_locality_groups(
         rank_groups = _node_rank_groups(topology, dict(statuses))
     else:
         rank_groups = _fixed_rank_groups(topology, balance_group_size)
-    own_groups = None
-    for ranks in rank_groups:
-        control_group = None
-        payload_group = None
-        if distributed and len(ranks) > 1:
-            control_group = dist.new_group(ranks=list(ranks), backend=communication_backend)
-            payload_group = control_group
-            if communication_backend == "hccl":
-                payload_group = dist.new_group(ranks=list(ranks), backend=communication_backend)
-        if topology.constructor_rank in ranks:
-            own_groups = DataGroups(ranks, control_group, payload_group, None, min(ranks), distributed)
-    if distributed:
+    own_ranks = next(ranks for ranks in rank_groups if topology.constructor_rank in ranks)
+    own_groups = DataGroups(own_ranks, None, None, None, min(own_ranks), distributed)
+    if not distributed:
+        return topology, own_groups
+    with own_groups.close_on_error():
+        for ranks in rank_groups:
+            control, payload = _create_data_plane_process_groups(
+                groups=own_groups, topology=topology, data_plane_ranks=ranks,
+                cpu_backend=communication_backend, payload_backend=communication_backend,
+                reuse_control_group=communication_backend == "gloo", enable_payload_exchange=True,
+            )
+            if rank in ranks:
+                own_groups.control_group = control
+                own_groups.payload_group = payload
         device_type = getattr(model_device, "type", "cpu")
         tensor_backend = None
         if communication_backend == "gloo" and device_type != "cpu":
             tensor_backend = "nccl" if device_type == "cuda" else "hccl"
         model_group, tensor_group = _create_model_parallel_process_groups(
-            topology, communication_backend, tensor_backend,
+            own_groups, topology, communication_backend, tensor_backend,
         )
-        own_groups = replace(
-            own_groups, model_parallel_group=model_group, model_parallel_tensor_group=tensor_group,
-        )
+        own_groups.model_parallel_group = model_group
+        own_groups.model_parallel_tensor_group = tensor_group
     return topology, own_groups

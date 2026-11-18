@@ -14,17 +14,23 @@
 # ============================================================================
 """Public external builder coverage with DP constructors and CP consumers."""
 
+from __future__ import annotations
+
+import gc
 import os
+import weakref
 from collections.abc import Iterator
-from contextlib import closing
+from contextlib import ExitStack, closing
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+import pytest
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.distributed_c10d import _world
 
 from hyper_parallel.distributed_data import (
     DistributedDatasetConfig, SampleMetadata, WorkloadCost, build_distributed_dataloader,
@@ -97,15 +103,26 @@ def _exercise(backend: str, init_method: str | None = None) -> None:
     }
     dist.init_process_group(backend, timeout=timedelta(seconds=120), **options)
     mesh = init_device_mesh(device.type, (2, 2), mesh_dim_names=("dp", "cp"))
+    baseline = set(_world.pg_map)
     try:
         for broadcast_plan in (True, False):
             config = DistributedDatasetConfig(seq_len=32, local_batch_size=1, communication_backend=backend,
                                               broadcast_plan=broadcast_plan, balance_group_size=2)
+            if broadcast_plan:
+                with pytest.raises(ValueError, match="model_batch_spec"):
+                    build_distributed_dataloader(
+                        None, mesh, config, external_step_source=Source(dist.get_rank()),
+                        metadata_fn=_metadata, pack_fn=_pack, cost_model=lambda item: item.cost,
+                        device=device, model_batch_spec=object(),
+                    )
+                assert set(_world.pg_map) == baseline, "Failed construction leaked a process group."
             with closing(build_distributed_dataloader(
                 None, mesh, config, external_step_source=Source(dist.get_rank()),
                 metadata_fn=_metadata, pack_fn=_pack, cost_model=lambda item: item.cost,
                 device=device, batch_to_device_fn=_move,
             )) as loader:
+                handles = [weakref.ref(pg) for pg in set(_world.pg_map) - baseline]
+                assert handles, "Expected loader-owned process groups on each rank."
                 first = next(loader)[0]
                 assert first["producer_pid"] != os.getpid(), "CPU work ran in the training process"
                 assert first["cu_seqlens"].device.type == "cpu", "CPU metadata placement changed"
@@ -128,6 +145,11 @@ def _exercise(backend: str, init_method: str | None = None) -> None:
                 dist.destroy_process_group(validation)
                 loader.set_epoch(1)
                 torch.testing.assert_close(next(loader)[0]["ids"], first["ids"], rtol=0, atol=0)
+            loader.close()
+            gc.collect()
+            assert all(ref() is None for ref in handles), "A closed loader still holds a process group."
+            assert set(_world.pg_map) == baseline, "Closing a loader must preserve the training groups."
+            dist.barrier(group=mesh.get_group("dp"))
         if device.type == "npu":
             torch.npu.synchronize()
     finally:
@@ -147,12 +169,13 @@ def test_external_process_hccl():
 def test_external_process_gloo_file_store():
     """Recover through a shared-file rendezvous instead of the launcher store."""
     dist.init_process_group("gloo", timeout=timedelta(seconds=120))
-    directory = TemporaryDirectory(prefix="hp-data-test-") if dist.get_rank() == 0 else None
-    path = [str(Path(directory.name) / "store") if directory is not None else None]
-    dist.broadcast_object_list(path, src=0)
-    dist.destroy_process_group()
-    try:
+    with ExitStack() as cleanup:
+        path = [None]
+        try:
+            if dist.get_rank() == 0:
+                directory = cleanup.enter_context(TemporaryDirectory(prefix="hp-data-test-"))
+                path[0] = str(Path(directory) / "store")
+            dist.broadcast_object_list(path, src=0)
+        finally:
+            dist.destroy_process_group()
         _exercise("gloo", init_method="file://" + path[0])
-    finally:
-        if directory is not None:
-            directory.cleanup()

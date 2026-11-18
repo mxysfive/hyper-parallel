@@ -66,6 +66,10 @@ CPU/device placement; a native `model_batch_spec` must match the returned tree.
 Checkpoints retain the original Host batch and apply the callback again on
 resume, so keep its semantics consistent across ranks and resumed runs.
 
+Close the loader on all ranks at the same consumption boundary before distributed teardown.
+Closing stops owned persistent Dataset workers and releases loader-created process groups.
+The training mesh and caller-owned source keep their own lifetimes.
+
 ## Existing loaders and HY
 
 Use `external_step_source` to preserve the application's existing tokenizer,

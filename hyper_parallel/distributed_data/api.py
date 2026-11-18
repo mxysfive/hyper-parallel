@@ -821,6 +821,8 @@ def _build_distributed_dataloader_impl(
             "labels": TensorFieldSpec(shape, torch.int64),
             "cu_seq_lens": TensorFieldSpec((None,), torch.int32),
         }
+    if model_batch_spec is None and len(state.topology.model_parallel_ranks) > 1:
+        raise ValueError("Model-parallel loading requires the same model_batch_spec on every rank.")
     groups = create_data_groups(
         state.topology,
         state.dataset_reader_ranks,
@@ -832,38 +834,40 @@ def _build_distributed_dataloader_impl(
         model_device=device,
     )
 
-    accumulation_steps = batch_sampler.global_batch_size // batch_sampler.global_micro_batch_size
-    return DistributedDataLoader(
-        accumulation_steps=accumulation_steps,
-        balance_window_size=config.balance_window_size,
-        device_prefetch_depth=config.device_prefetch_depth,
-        device=device,
-        initial_epoch=batch_sampler.epoch,
-        initial_consumed_samples=batch_sampler.consumed_samples,
-        topology=state.topology,
-        dataset_reader_ranks=state.dataset_reader_ranks,
-        dataset_reader=state.dataset_reader,
-        metadata_reader=state.metadata_reader,
-        direct_sample_loader=state.direct_sample_loader,
-        metadata_mode=config.metadata_mode,
-        broadcast_plan=config.broadcast_plan,
-        log_balance=config.log_balance,
-        planner=state.planner,
-        data_constructor=state.constructor,
-        data_plane=DataPlaneTransport(
-            groups,
-            state.topology.global_rank,
-            communication_device=communication_device,
-        ),
-        model_transport=ModelParallelTransport(
-            state.topology,
-            groups,
-            model_batch_spec=model_batch_spec,
+    with groups.close_on_error():
+        accumulation_steps = batch_sampler.global_batch_size // batch_sampler.global_micro_batch_size
+        return DistributedDataLoader(
+            groups=groups,
+            accumulation_steps=accumulation_steps,
+            balance_window_size=config.balance_window_size,
+            device_prefetch_depth=config.device_prefetch_depth,
             device=device,
-            communication_device=communication_device,
-        ),
-        device_prefetch=device_prefetch if state.topology.is_constructor else None,
-    )
+            initial_epoch=batch_sampler.epoch,
+            initial_consumed_samples=batch_sampler.consumed_samples,
+            topology=state.topology,
+            dataset_reader_ranks=state.dataset_reader_ranks,
+            dataset_reader=state.dataset_reader,
+            metadata_reader=state.metadata_reader,
+            direct_sample_loader=state.direct_sample_loader,
+            metadata_mode=config.metadata_mode,
+            broadcast_plan=config.broadcast_plan,
+            log_balance=config.log_balance,
+            planner=state.planner,
+            data_constructor=state.constructor,
+            data_plane=DataPlaneTransport(
+                groups,
+                state.topology.global_rank,
+                communication_device=communication_device,
+            ),
+            model_transport=ModelParallelTransport(
+                state.topology,
+                groups,
+                model_batch_spec=model_batch_spec,
+                device=device,
+                communication_device=communication_device,
+            ),
+            device_prefetch=device_prefetch if state.topology.is_constructor else None,
+        )
 
 
 __all__ = ["DistributedDatasetConfig", "build_distributed_dataloader"]

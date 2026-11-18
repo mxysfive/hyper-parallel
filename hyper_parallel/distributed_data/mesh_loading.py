@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from hyper_parallel.distributed_data.topology import DataTopology
-from hyper_parallel.distributed_data.transport import ModelParallelTransport
+from hyper_parallel.distributed_data.transport import DataGroups, ModelParallelTransport
 
 
 class MeshBalancingDataLoader:
@@ -31,13 +31,15 @@ class MeshBalancingDataLoader:
 
     def __init__(
             self, source: Any, reader: Any, topology: DataTopology,
-            transport: ModelParallelTransport,
+            transport: ModelParallelTransport, groups: DataGroups | None = None,
     ) -> None:
         """Bind the optional constructor loader and the common model transport."""
         self._source = source
         self._reader = reader
         self._topology = topology
         self._transport = transport
+        self._groups = groups
+        self._closed = False
         self._step = 0
         self._finished = False
         self._resuming = False
@@ -107,6 +109,8 @@ class MeshBalancingDataLoader:
         Args:
             epoch: Source epoch to start, preserving a just-restored same epoch.
         """
+        if self._closed:
+            raise RuntimeError("Data loader is closed.")
         if self._resuming and epoch == self._epoch:
             return
         if self._reader is not None:
@@ -136,6 +140,8 @@ class MeshBalancingDataLoader:
         Args:
             state: This rank's loader state saved at a completed optimizer step.
         """
+        if self._closed:
+            raise RuntimeError("Data loader is closed.")
         if state["topology"] != self._checkpoint_topology():
             raise ValueError("External loader checkpoint requires the same named mesh and rank placement.")
         if self._reader is not None:
@@ -149,9 +155,15 @@ class MeshBalancingDataLoader:
 
     def close(self) -> None:
         """Drain reader prefetch before releasing the iterator."""
-        if self._reader is not None:
-            self._reader.close()
-        self._finished = True
+        try:
+            if self._closed:
+                return
+            self._closed = self._finished = True
+            if self._reader is not None:
+                self._reader.close()
+        finally:
+            if self._groups is not None:
+                self._groups.close()
 
 
 __all__ = ["MeshBalancingDataLoader"]

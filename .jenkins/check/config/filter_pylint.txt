@@ -176,3 +176,5 @@
 #     public API and no get_platform() equivalent (mindspore has no FX-tracing
 #     surface); moving the package under platform/torch/ is tracked separately.
 "hyper-parallel/hyper_parallel/compile/"                                   "forbidden-backend-import"
+# PyTorch has no public shutdown for a retained persistent DataLoader iterator.
+"hyper-parallel/hyper_parallel/distributed_data/metadata.py"             "protected-access"

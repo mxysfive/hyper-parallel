@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import ExitStack
 from dataclasses import asdict, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -51,6 +52,7 @@ from hyper_parallel.distributed_data.schema import (
 )
 from hyper_parallel.distributed_data.topology import DataTopology
 from hyper_parallel.distributed_data.transport import (
+    DataGroups,
     DataPlaneTransport,
     ModelParallelTransport,
 )
@@ -312,6 +314,7 @@ class LocalBalancingDataLoader(Iterator[Any]):
             collate_fn: Callable[[Sequence[Any]], Any], planner: Any, transport: DataPlaneTransport,
             global_rank: int, device_prefetch: DeviceStepPrefetcher | None = None,
             topology: DataTopology,
+            groups: DataGroups | None = None,
             balance_stats_callback: Callable[[dict[str, Any], int], None] | None = None,
     ) -> None:
         """Store the source description without starting workers or device work."""
@@ -322,6 +325,8 @@ class LocalBalancingDataLoader(Iterator[Any]):
         self.prefetches_to_device = device_prefetch is not None
         self.last_balance_stats = None
         self._transport = transport
+        self._groups = groups
+        self._closed = False
         self._global_rank = global_rank
         self._device_prefetch = device_prefetch
         self._balance_stats_callback = balance_stats_callback
@@ -336,6 +341,8 @@ class LocalBalancingDataLoader(Iterator[Any]):
         self._resuming = False
 
     def _ensure_producer(self) -> ProcessDataProducer:
+        if self._closed:
+            raise RuntimeError("Data loader is closed.")
         if self._producer is None:
             self._producer = ProcessDataProducer(self._factory, self._transport, self._device_prefetch)
         return self._producer
@@ -455,13 +462,16 @@ class LocalBalancingDataLoader(Iterator[Any]):
 
     def close(self) -> None:
         """Stop owned data workers after pending communication and H2D complete."""
-        try:
+        with ExitStack() as cleanup:
+            if self._groups is not None:
+                cleanup.callback(self._groups.close)
+            if self._closed:
+                return
+            self._closed = self._finished = True
+            if self._device_prefetch is not None:
+                cleanup.callback(self._device_prefetch.close)
             if self._producer is not None:
                 self._producer.close()
-        finally:
-            if self._device_prefetch is not None:
-                self._device_prefetch.close()
-            self._finished = True
 
 
 def build_local_balancing_dataloader(
@@ -541,43 +551,46 @@ def build_local_balancing_dataloader(
         communication_device=communication_device,
         model_device=device,
     )
-    planner = DynamicPackingPlanner(
-        data_parallel_size=len(groups.data_plane_ranks),
-        seq_len=config.seq_len,
-        local_batch_size=config.local_batch_size,
-        oversized_policy=config.oversized_policy,
-        packing_budgets=config.packing_budgets,
-        cost_model=cost_model,
-        balancing_algorithm=balancing_algorithm,
-        min_balance_gain=config.min_balance_gain,
-        validate=False,
-    )
-    reader = LocalBalancingDataLoader(
-        local_dataloader,
-        config=config,
-        metadata_fn=metadata_fn,
-        pack_fn=pack_fn,
-        collate_fn=collate_fn,
-        planner=planner,
-        transport=DataPlaneTransport(
-            groups,
-            topology.global_rank,
-            communication_device=communication_device,
-        ),
-        global_rank=topology.global_rank,
-        topology=topology,
-        device_prefetch=device_prefetch,
-        balance_stats_callback=log_balance_stats if config.log_balance else None,
-    ) if topology.is_constructor else None
-    if len(topology.model_parallel_ranks) == 1:
-        return reader
-    return MeshBalancingDataLoader(
-        local_dataloader, reader, topology,
-        ModelParallelTransport(
-            topology, groups, communication_device=communication_device,
-            model_batch_spec=model_batch_spec, device=device, dynamic_layout=True,
-        ),
-    )
+    with groups.close_on_error():
+        planner = DynamicPackingPlanner(
+            data_parallel_size=len(groups.data_plane_ranks),
+            seq_len=config.seq_len,
+            local_batch_size=config.local_batch_size,
+            oversized_policy=config.oversized_policy,
+            packing_budgets=config.packing_budgets,
+            cost_model=cost_model,
+            balancing_algorithm=balancing_algorithm,
+            min_balance_gain=config.min_balance_gain,
+            validate=False,
+        )
+        reader = LocalBalancingDataLoader(
+            local_dataloader,
+            config=config,
+            metadata_fn=metadata_fn,
+            pack_fn=pack_fn,
+            collate_fn=collate_fn,
+            planner=planner,
+            transport=DataPlaneTransport(
+                groups,
+                topology.global_rank,
+                communication_device=communication_device,
+            ),
+            global_rank=topology.global_rank,
+            topology=topology,
+            groups=groups if len(topology.model_parallel_ranks) == 1 else None,
+            device_prefetch=device_prefetch,
+            balance_stats_callback=log_balance_stats if config.log_balance else None,
+        ) if topology.is_constructor else None
+        if len(topology.model_parallel_ranks) == 1:
+            return reader
+        return MeshBalancingDataLoader(
+            local_dataloader, reader, topology,
+            ModelParallelTransport(
+                topology, groups, communication_device=communication_device,
+                model_batch_spec=model_batch_spec, device=device, dynamic_layout=True,
+            ),
+            groups=groups,
+        )
 
 
 __all__ = ["LocalBalancingDataLoader", "build_local_balancing_dataloader"]
