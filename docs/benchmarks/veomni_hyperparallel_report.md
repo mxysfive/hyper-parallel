@@ -178,8 +178,6 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 ### 性能分析
 
-以下为 Muon 方案的 profiling 阶段统计，与前面的训练步时分别展示。
-
 #### 整体与分阶段结果
 
 | 配置 | 阶段 | VeOmni 耗时（s） | Hyper 耗时（s） | 耗时下降（%） |
