@@ -271,6 +271,28 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
 ![VeOmni Muon std / Hyper Muon std loss 对比](assets/veomni/loss_128die_16k_muon_std_prefetch1.svg)
 
+### 性能问题观察（待分析）
+
+以下内容根据提供的截图及其标注整理；具体运行配置和对整体性能的影响仍需进一步核对。
+
+#### AICPU 算子与 Host/Device 同步
+
+截图在 `aten::bincount`、`aten::item` 附近标出了 AICPU 排序算子及 Host/Device 同步。
+
+<img src="assets/veomni/issue_qwen38_aicpu_sync.png" alt="Qwen3.8-Flash-Next AICPU 算子与 Host/Device 同步" width="900">
+
+#### Triton kernel 编译开销
+
+截图标注了 rank 33 的 Triton kernel 编译和反向 kernel 编译。
+
+<img src="assets/veomni/issue_qwen38_triton_compile.png" alt="Qwen3.8-Flash-Next Triton kernel 编译开销" width="900">
+
+#### Rank 间负载差异
+
+截图标注 rank 8–15 的 FA 片段较长，并以 rank 10 的 11 ms 和 rank 16 的 0.9 ms 为例；两处标注的统计口径仍需结合完整轨迹核对。
+
+<img src="assets/veomni/issue_qwen38_rank_imbalance.png" alt="Qwen3.8-Flash-Next 不同 rank 的负载差异" width="900">
+
 ## 实验三：Qwen3-VL-30B-A3B
 
 配置：加载完整的 Qwen3-VL-30B-A3B-Instruct 预训练权重，使用 VeOmni AdamW（学习率 1e-5、cosine 衰减、weight decay 0、梯度裁剪 1.0）；FSDP 混合精度的参数和梯度归约均为 BF16。
