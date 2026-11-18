@@ -75,8 +75,10 @@ complete local optimizer step as `[[raw_sample, ...], ...]`, with exactly
 workers and step limits. Every constructor must yield the same number of steps.
 
 External loading owns one independent CPU producer per constructor. Supply an
-unstarted, cloudpickle-serializable source and CPU-only callbacks; disable source
-`pin_memory` because HP pins the final packed batch in the training process.
+unstarted source and CPU-only callbacks. When the environment provides `dill`,
+callbacks may be lambdas or closures. With standard-library `pickle`, define
+callbacks and source classes at the top level of an importable module. Disable
+source `pin_memory` because HP pins the final packed batch in the training process.
 The producer may start its own DataLoader workers. The next step starts
 automatically before returning the current batch, overlapping forward and
 backward. `prefetch_plan()` and `prefetch()` remain idempotent compatibility hooks.

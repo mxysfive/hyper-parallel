@@ -15,6 +15,7 @@
 """Process isolation, inline-storage ownership and consumed-cursor recovery."""
 
 import os
+import pickle
 import unittest
 from collections.abc import Iterator
 from contextlib import closing
@@ -32,6 +33,7 @@ from hyper_parallel.distributed_data.process_data import (
     _child_environment,
     _decode_host_batch,
     _encode_host_batch,
+    _serialize_source,
 )
 
 from tests.common.mark_utils import arg_mark
@@ -90,6 +92,17 @@ def _loader(source):
 
 class TestProcessProducer(unittest.TestCase):
     """Use real CPU subprocesses without initializing distributed communication."""
+
+    @arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="onecard", essential_mark="essential")
+    def test_source_callbacks_without_dill(self) -> None:
+        """Feature: Data process startup with standard-library pickle.
+        Description: Serialize an importable callback and a local callback without dill.
+        Expectation: The importable callback round-trips and the local callback reports the requirement.
+        """
+        with patch("hyper_parallel.distributed_data.process_data._SOURCE_PICKLE", pickle):
+            self.assertEqual(pickle.loads(_serialize_source((SampleMetadata,))), (SampleMetadata,))
+            with self.assertRaisesRegex(TypeError, "importable module"):
+                _serialize_source((lambda sample: sample,))
 
     @arg_mark(plat_marks=["cpu_linux"], level_mark="level0", card_mark="onecard", essential_mark="essential")
     def test_process_isolation_prefetch_restore_and_epoch(self):

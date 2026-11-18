@@ -36,10 +36,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-import cloudpickle
 import numpy as np
 import torch  # pylint: disable=forbidden-backend-import
 import torch.distributed as dist  # pylint: disable=forbidden-backend-import
+from torch.utils._import_utils import import_dill  # pylint: disable=forbidden-backend-import
 
 from hyper_parallel.distributed_data.device_prefetch import (
     DevicePrefetchedStep,
@@ -52,6 +52,9 @@ from hyper_parallel.distributed_data.transport import (
     _decode_received_payloads,
     _encode_payload_segment,
 )
+
+
+_SOURCE_PICKLE = import_dill() or pickle
 
 _REPLY_TIMEOUT = 300
 
@@ -217,6 +220,17 @@ def _prepare_batch_message(host_batch: Any, stage: DeviceStepPrefetcher | None, 
     return layout, cpu_indices, device_indices, device_values, cpu_values, stats
 
 
+def _serialize_source(value: tuple) -> bytes:
+    """Capture callback globals for the fresh interpreter when dill is available."""
+    if _SOURCE_PICKLE is not pickle:
+        return _SOURCE_PICKLE.dumps(value, recurse=True)
+    try:
+        return pickle.dumps(value)
+    except (AttributeError, pickle.PicklingError) as exc:
+        raise TypeError("Use callbacks from an importable module when dill is unavailable. "
+                        f"Could not serialize the data source: {exc}") from exc
+
+
 def _producer_main(capsule_path: str, descriptor: int) -> None:
     """Own source, collectives and staging in a fresh interpreter."""
     connection = Connection(descriptor)
@@ -229,7 +243,7 @@ def _producer_main(capsule_path: str, descriptor: int) -> None:
         with open(capsule_path, "rb") as handle:
             module_paths, capsule = pickle.load(handle)
         sys.path[:] = module_paths
-        factory, ranks, planner_rank, rng_state, stage, device, bootstrap = cloudpickle.loads(capsule)
+        factory, ranks, planner_rank, rng_state, stage, device, bootstrap = _SOURCE_PICKLE.loads(capsule)
         _restore_cpu_rng(rng_state)
         initialized = _initialize_child_group(bootstrap, ranks, stage)
         transport = ProducerTransport(ranks, planner_rank, ranks[bootstrap["rank"]], device)
@@ -312,7 +326,7 @@ class ProcessDataProducer:
                 bootstrap.update(_store_descriptor(), prefix="hp-device-producer-" + tokens[0],
                                  rank=transport.ranks.index(dist.get_rank()))
             with self._capsule.open("wb") as handle:
-                capsule = cloudpickle.dumps((factory, transport.ranks, transport.planner_rank,
+                capsule = _serialize_source((factory, transport.ranks, transport.planner_rank,
                                              _cpu_rng_state(), stage, transport.communication_device, bootstrap))
                 pickle.dump((sys.path, capsule), handle)
         except BaseException:
