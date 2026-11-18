@@ -316,5 +316,5 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
 ## 社区分享
 
-- [HyperParallel 知乎回答（一）](https://www.zhihu.com/question/648834444/answer/2065147984069842200)
-- [HyperParallel 知乎回答（二）](https://www.zhihu.com/question/13193527053/answer/2065364315218170167)
+- [HyperParallel FSDP](https://www.zhihu.com/question/648834444/answer/2065147984069842200)
+- [HyperParallel Muon](https://www.zhihu.com/question/13193527053/answer/2065364315218170167)
