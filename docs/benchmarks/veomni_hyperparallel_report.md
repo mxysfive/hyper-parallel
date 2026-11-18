@@ -309,3 +309,7 @@ micro batch size=1，每步一个 microbatch，GBS=16；每组 100 步
 VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
 ![Qwen3-VL-30B-A3B 不同打包长度的 loss 对比](assets/veomni/loss_16die_qwen3vl_ep8_seq.svg)
+
+## 技术报告
+
+[HyperParallel-FSDP: Topology-Aware Fully Sharded Training with Layout-Driven Muon on Ascend SuperPods](https://arxiv.org/abs/2609.21594)
