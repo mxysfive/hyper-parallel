@@ -229,13 +229,13 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
 ## 实验三：Qwen3-VL-30B-A3B
 
-配置：加载完整的 Qwen3-VL-30B-A3B-Instruct 预训练权重，使用 VeOmni AdamW（学习率 1e-5、cosine 衰减、weight decay 0、梯度裁剪 1.0）；FSDP 混合精度的参数和梯度归约均为 BF16。VeOmni 使用 `b0f4e893`，HyperParallel 使用 `ada54bd4`。
+配置：加载完整的 Qwen3-VL-30B-A3B-Instruct 预训练权重，使用 VeOmni AdamW（学习率 1e-5、cosine 衰减、weight decay 0、梯度裁剪 1.0）；FSDP 混合精度的参数和梯度归约均为 BF16。
 
 Hyper 的 `comm_fusion` 默认关闭，通过启动策略仅对 27 个 ViT block 单独设置 `comm_fusion=True`；前向、反向预取深度均为 1。
 
-数据：Tulu-3 SFT 纯文本对话，过滤超过 2K token 的单条会话后重复采样，动态打包且不补齐；ViT 执行 dummy forward。表中长度为每 rank 的打包 token 上限，并非单条会话长度；随机种子 42。
+数据：Tulu-3 SFT 纯文本对话，过滤超过 2K token 的单条会话后重复采样，动态打包且不补齐；ViT 执行 dummy forward；随机种子 42。
 
-运行时按 rank 绑核；环境变量：`TASK_QUEUE_ENABLE=2`、`PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`、`MULTI_STREAM_MEMORY_REUSE=2`。
+环境变量：`TASK_QUEUE_ENABLE=2`、`PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`、`MULTI_STREAM_MEMORY_REUSE=2`。
 
 ### 单机16die
 
@@ -264,6 +264,6 @@ micro batch size=1，每步一个 microbatch，GBS=16；每组 100 步
 
 #### 精度对比
 
-VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW。Loss 按训练日志显示值绘制，保留两位小数。
+VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
 ![Qwen3-VL-30B-A3B 不同打包长度的 loss 对比](assets/veomni/loss_16die_qwen3vl_ep8_seq.svg)
