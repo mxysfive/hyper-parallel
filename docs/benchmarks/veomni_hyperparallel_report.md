@@ -185,10 +185,9 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 ### 8机128die
 
 ```text
-128die，SP=8，EP=8，PLE=8，replicate=1
-dp_shard_size=16，与 SP=8 组成 128 卡设备网格；普通参数 FSDP shard=128
-完全重算（非重入），每 rank 序列长度 16K
-micro batch size=1，每步一个 microbatch，GBS=16；每组 100 步
+128die，SP=8，EP=8，PLE=8，FSDP shard=128，replicate=1
+完全重算（非重入），每rank序列长度16K
+micro batch size=1，梯度累加数=1，GBS=16；每组100步
 ```
 
 #### 实验情况
