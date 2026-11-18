@@ -189,9 +189,9 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 配置：加载 Qwen3.8-Flash-Next 预训练权重，使用 VeOmni AdamW（学习率 1e-5、cosine 衰减、weight decay 0、梯度裁剪 1.0）；参数为 BF16、梯度归约为 FP32。两组除 FSDP 后端外使用相同训练配置，Hyper 的通信融合关闭、前向预取深度为 2、反向为 1。
 
-数据：Tulu-3 SFT 文本对话数据（`tulu-3-sft-mixture`），动态 batch 并 pad 至配置长度，最大序列长度 131072；随机种子 42。两组分别在相同 8 台机器上串行运行，对比 128 个 rank × 100 步的输入摘要，12800 项均一致。
+数据：Tulu-3 SFT 文本对话数据（`tulu-3-sft-mixture`），动态 batch 并 pad 至配置长度，最大序列长度 131072；随机种子 42。原有 AdamW 两组分别在相同 8 台机器上串行运行，对比 128 个 rank × 100 步的输入摘要，12800 项均一致。
 
-环境：每个 rank 绑定两个独立 CPU 核；`TASK_QUEUE_ENABLE=2`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`、`MULTI_STREAM_MEMORY_REUSE=2`。
+环境：每个 rank 绑定两个独立 CPU 核；`TASK_QUEUE_ENABLE=2`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`；原有 AdamW 实验设置 `MULTI_STREAM_MEMORY_REUSE=2`。
 
 ### 8机128die
 
@@ -208,26 +208,26 @@ micro batch size=1，每步一个 microbatch，GBS=16；每组 100 步
 | --- | --- | --- | --- | --- | --- |
 | 16K | **VeOmni FSDP2＋AdamW（基线）** | 44.8834 | — | 47.82 / 54.61 | — / — |
 | 16K | Hyper FSDP＋AdamW | 44.5621 | 0.72 | 47.86 / 51.23 | -0.09 / 6.19 |
-| 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 待补充 | — | 待补充 / 待补充 | — / — |
-| 16K | Hyper FSDP＋Hyper Muon std | 待补充 | 待补充 | 待补充 / 待补充 | 待补充 / 待补充 |
+| 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 48.2736 | — | 43.92 / 50.74 | — / — |
+| 16K | Hyper FSDP＋Hyper Muon std | 46.7510 | 3.26 | 43.36 / 45.97 | 1.27 / 9.40 |
 
 #### Profiling
 
 ##### 16K · VeOmni FSDP2＋AdamW
 
-截图待补充。
+<img src="assets/veomni/profile_128die_16k_native_adamw.png" alt="128die VeOmni FSDP2＋AdamW profiling" width="900">
 
 ##### 16K · Hyper FSDP＋AdamW
 
-截图待补充。
+<img src="assets/veomni/profile_128die_16k_hyper_adamw.png" alt="128die Hyper FSDP＋AdamW profiling" width="900">
 
 ##### 16K · VeOmni FSDP2＋VeOmni Muon std
 
-截图待补充。
+<img src="assets/veomni/profile_128die_16k_native_muon_std.png" alt="128die VeOmni FSDP2＋VeOmni Muon std profiling" width="900">
 
 ##### 16K · Hyper FSDP＋Hyper Muon std
 
-截图待补充。
+<img src="assets/veomni/profile_128die_16k_hyper_muon_std.png" alt="128die Hyper FSDP＋Hyper Muon std profiling" width="900">
 
 #### 精度对比
 
@@ -237,4 +237,4 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
 ![VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW loss对比](assets/veomni/loss_128die_16k_adamw.svg)
 
-VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比图：待补充。
+![VeOmni Muon std / Hyper Muon std loss 对比](assets/veomni/loss_128die_16k_muon_std_prefetch1.svg)
