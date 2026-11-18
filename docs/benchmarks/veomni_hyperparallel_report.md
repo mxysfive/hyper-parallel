@@ -271,9 +271,13 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
 ![VeOmni Muon std / Hyper Muon std loss 对比](assets/veomni/loss_128die_16k_muon_std_prefetch1.svg)
 
-### 性能问题观察（待分析）
+### 性能问题观察
 
-以下内容根据提供的截图及其标注整理；具体运行配置和对整体性能的影响仍需进一步核对。
+Flash-Next 当前主要有三类性能问题：
+
+1. **计算路径开销**：部分计算触发 AICPU 算子，出现执行断流，影响设备利用率。
+2. **Attention 负载不均**：不同 rank 的样本长度和打包组成不同，即使总 token 数接近，Attention 计算量仍可能存在差异，具体归因待进一步验证。
+3. **Triton 在线编译**：数据或输入形状变化导致部分 rank 触发在线编译，拉大执行进度差异，并表现为通信等待和快慢卡现象。
 
 #### AICPU 算子与 Host/Device 同步
 
