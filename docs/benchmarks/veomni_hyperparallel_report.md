@@ -313,3 +313,8 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 ## 技术报告
 
 [HyperParallel-FSDP: Topology-Aware Fully Sharded Training with Layout-Driven Muon on Ascend SuperPods](https://arxiv.org/abs/2609.21594)
+
+## 社区分享
+
+- [HyperParallel 知乎回答（一）](https://www.zhihu.com/question/648834444/answer/2065147984069842200)
+- [HyperParallel 知乎回答（二）](https://www.zhihu.com/question/13193527053/answer/2065364315218170167)
