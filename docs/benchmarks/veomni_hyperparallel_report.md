@@ -178,7 +178,7 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 配置：加载 Qwen3.8-Flash-Next 预训练权重，使用 VeOmni AdamW（学习率 1e-5、cosine 衰减、weight decay 0、梯度裁剪 1.0）；参数为 BF16、梯度归约为 FP32。两组除 FSDP 后端外使用相同训练配置，Hyper 的通信融合关闭、前向预取深度为 2、反向为 1。
 
-数据：Tulu-3 SFT 文本对话数据（`tulu-3-sft-mixture`），动态 batch 并 pad 至配置长度，最大序列长度 131072；随机种子 42。原有 AdamW 两组分别在相同 8 台机器上串行运行，对比 128 个 rank × 100 步的输入摘要，12800 项均一致。
+数据：Tulu-3 SFT 文本对话数据（`tulu-3-sft-mixture`），动态 batch 并 pad 至配置长度，最大序列长度 131072；随机种子 42。
 
 环境：每个 rank 绑定两个独立 CPU 核；`TASK_QUEUE_ENABLE=2`、`OMP_NUM_THREADS=1`、`MKL_NUM_THREADS=1`、`PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`；原有 AdamW 实验设置 `MULTI_STREAM_MEMORY_REUSE=2`。
 
