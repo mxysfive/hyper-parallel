@@ -31,16 +31,18 @@ hyper_parallel:
 micro batch size=1，梯度累加数=1，GBS=16；每组100步
 ```
 
+FSDP开启前向预取；Hyper前向、反向预取深度均为1，`comm_fusion=false`。
+
 #### 实验情况
 
 | 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated / reserved（GiB） | 显存节省 allocated / reserved（%） |
 | --- | --- | --- | --- | --- | --- |
-| 8K | **VeOmni FSDP2＋AdamW（基线）** | 7.6849 | — | 47.24 / 54.99 | — / — |
-| 8K | Hyper FSDP＋AdamW | 5.8394 | 31.61 | 47.34 / 50.70 | -0.21 / 7.80 |
-| 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 7.8723 | — | 39.30 / 47.13 | — / — |
-| 8K | Hyper FSDP＋Hyper Muon std | 6.0993 | 29.07 | 39.40 / 42.66 | -0.25 / 9.48 |
+| 8K | **VeOmni FSDP2＋AdamW（基线）** | 7.7325 | — | 47.25 / 55.01 | — / — |
+| 8K | Hyper FSDP＋AdamW | 5.9119 | 30.80 | 47.35 / 50.60 | -0.21 / 8.01 |
+| 8K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 7.8933 | — | 39.31 / 47.14 | — / — |
+| 8K | Hyper FSDP＋Hyper Muon std | 6.1809 | 27.70 | 39.41 / 42.80 | -0.25 / 9.21 |
 
-#### Profiling
+#### Profiling（历史采集）
 
 ##### 8K · VeOmni FSDP2＋AdamW
 
@@ -60,7 +62,7 @@ micro batch size=1，梯度累加数=1，GBS=16；每组100步
 
 #### 精度对比
 
-##### 8K
+##### 8K（历史性能运行）
 
 VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 
@@ -196,7 +198,7 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 ### 性能分析
 
-以下为 Muon 方案的 profiling 阶段统计。
+以下为此前 Muon 方案的 profiling 阶段统计，16die数据对应历史采集。
 
 #### 整体与分阶段结果
 
