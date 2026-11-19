@@ -137,7 +137,7 @@ micro batch size=1，梯度累加数=1，GBS=64；每组100步
 | 16K | **VeOmni FSDP2＋AdamW（基线）** | 15.00 | — | 35.34 | — |
 | 16K | Hyper HSDP＋AdamW | 13.47 | 11.35 | 35.38 | -0.11 |
 | 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 15.94 | — | 31.37 | — |
-| 16K | Hyper HSDP＋Hyper Muon std | 13.69 | 16.48 | 30.68 | 2.20 |
+| 16K | Hyper HSDP＋Hyper Muon std | 13.76 | 15.84 | 30.68 | 2.20 |
 
 ##### Profiling
 
@@ -186,7 +186,7 @@ micro batch size=1，梯度累加数=1，GBS=64；每组100步
 | 16K | **VeOmni FSDP2＋AdamW（基线）** | 15.59 | — | 27.83 | — |
 | 16K | Hyper FSDP＋AdamW | 13.41 | 16.23 | 27.86 | -0.11 |
 | 16K | **VeOmni FSDP2＋VeOmni Muon std（基线）** | 15.82 | — | 25.85 | — |
-| 16K | Hyper FSDP＋Hyper Muon std | 13.75 | 15.12 | 25.87 | -0.08 |
+| 16K | Hyper FSDP＋Hyper Muon std | 13.78 | 14.80 | 25.87 | -0.08 |
 
 ##### Profiling
 
