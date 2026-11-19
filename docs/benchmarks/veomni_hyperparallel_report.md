@@ -76,19 +76,21 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 精度验证仅调整：`lr_decay_style=constant`、`max_grad_norm=.inf`、`enable_full_determinism=true`；新增环境变量：`HCCL_DETERMINISTIC=strict`、`NPU_DETERMINISTIC=1`、`PYTHONHASHSEED=42`。
 
-| 对照项 | 结果 | 最大绝对差 |
-| --- | --- | --- |
-| loss | 逐位一致 | 0 |
-| grad_norm | 逐位一致 | 0 |
-| 初始权重 | 逐位一致 | — |
-| 已检查梯度 | 逐位一致 | — |
-| 已检查更新后权重 | 逐位一致 | — |
-
-16个rank、100步，共1600项逐步记录；两组输入与学习率一致。
-
 <img src="assets/veomni/strict_loss_16die_8k_adamw_100step.svg" alt="100步AdamW逐位精度验证：loss及差值" width="700">
 
 <img src="assets/veomni/strict_grad_norm_16die_8k_adamw_100step.svg" alt="100步AdamW逐位精度验证：grad_norm及差值" width="700">
+
+100步对照中，16个rank的loss、grad_norm逐位一致，最大绝对差均为0；已检查的梯度和更新后权重也逐位一致。
+
+##### 8K · AdamW开启梯度裁剪的逐位精度对照（100步）
+
+沿用上述精度验证配置，仅将`max_grad_norm`改为`1.0`。
+
+<img src="assets/veomni/strict_clip1_loss_16die_8k_adamw_100step.svg" alt="开启梯度裁剪的100步AdamW逐位精度验证：loss及差值" width="700">
+
+<img src="assets/veomni/strict_clip1_grad_norm_16die_8k_adamw_100step.svg" alt="开启梯度裁剪的100步AdamW逐位精度验证：grad_norm及差值" width="700">
+
+100步对照中，16个rank的loss、grad_norm逐位一致，最大绝对差均为0；已检查的裁剪后梯度和更新后权重也逐位一致。
 
 ### 4机64die
 
