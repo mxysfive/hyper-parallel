@@ -31,8 +31,6 @@ hyper_parallel:
 micro batch size=1，梯度累加数=1，GBS=16；每组100步
 ```
 
-精度验证仅调整：`lr_decay_style=constant`、`max_grad_norm=.inf`、`enable_full_determinism=true`；新增环境变量：`HCCL_DETERMINISTIC=strict`、`NPU_DETERMINISTIC=1`、`PYTHONHASHSEED=42`。
-
 #### 实验情况
 
 | 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated / reserved（GiB） | 显存节省 allocated / reserved（%） |
@@ -73,6 +71,8 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 ![VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比](assets/veomni/loss_16die_8k_muon_std.svg)
 
 ##### 8K · AdamW逐位精度对照（100步）
+
+精度验证仅调整：`lr_decay_style=constant`、`max_grad_norm=.inf`、`enable_full_determinism=true`；新增环境变量：`HCCL_DETERMINISTIC=strict`、`NPU_DETERMINISTIC=1`、`PYTHONHASHSEED=42`。
 
 | 对照项 | 结果 | 最大绝对差 |
 | --- | --- | --- |
