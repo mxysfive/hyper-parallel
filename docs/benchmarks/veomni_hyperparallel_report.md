@@ -92,6 +92,28 @@ VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 100步对照中，16个rank的loss、grad_norm逐位一致，最大绝对差均为0；已检查的裁剪后梯度和更新后权重也逐位一致。
 
+##### 8K · AdamW非确定性基线重复对照（100步）
+
+VeOmni FSDP2＋AdamW重复运行两次，沿用性能实验配置。
+
+<img src="assets/veomni/nondeterministic_loss_16die_8k_adamw_100step.svg" alt="非确定性Torch基线重复对照：rank 0的loss及差值" width="700">
+
+<img src="assets/veomni/nondeterministic_grad_norm_16die_8k_adamw_100step.svg" alt="非确定性Torch基线重复对照：rank 0的grad_norm及差值" width="700">
+
+##### 8K · EP=16、SP=2的AdamW对照（100步）
+
+沿用上述模型、数据及环境变量配置，对比VeOmni FSDP2＋AdamW与Hyper FSDP＋AdamW。
+
+```text
+单机16die，SP=2，EP=16，dp_shard_size=8，replicate=1
+完全重算（非重入），max_seq_len=8192
+micro batch size=1，GBS=16；每组100步
+```
+
+<img src="assets/veomni/loss_16die_8k_ep16_sp2_adamw_100step.svg" alt="EP16与SP2的AdamW对照：rank 0的loss及Hyper减VeOmni差值" width="700">
+
+<img src="assets/veomni/grad_norm_16die_8k_ep16_sp2_adamw_100step.svg" alt="EP16与SP2的AdamW对照：rank 0的grad_norm及Hyper减VeOmni差值" width="700">
+
 ### 4机64die
 
 基于 VeOmni 官方 example：[AdamW](https://github.com/ByteDance-Seed/VeOmni/blob/main/configs/multimodal/qwen3_5_moe/qwen3_5_moe_vl_ascendc.yaml)、[Muon](https://github.com/ByteDance-Seed/VeOmni/blob/main/configs/multimodal/qwen3_5_moe/qwen3_5_moe_vl_muon_ascendc.yaml)，加载完整预训练权重，其余模型、算子及优化器配置沿用对应 example。
