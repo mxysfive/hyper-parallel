@@ -31,6 +31,28 @@ hyper_parallel:
 micro batch size=1，梯度累加数=1，GBS=16；每组100步
 ```
 
+精度验证配置：
+
+```yaml
+model:
+  optimizer:
+    type: adamw
+    lr: 1.0e-5
+    lr_decay_style: constant
+    lr_start: 0.0
+    lr_min: 0.0
+    max_grad_norm: .inf
+train:
+  seed: 42
+  enable_full_determinism: true
+```
+
+```bash
+HCCL_DETERMINISTIC=strict
+NPU_DETERMINISTIC=1
+PYTHONHASHSEED=42
+```
+
 #### 实验情况
 
 | 序列长度 | 方案 | 单步耗时（s） | 性能提升（%） | 峰值显存 allocated / reserved（GiB） | 显存节省 allocated / reserved（%） |
@@ -69,6 +91,22 @@ VeOmni FSDP2＋AdamW / Hyper FSDP＋AdamW
 VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std
 
 ![VeOmni FSDP2＋VeOmni Muon std / Hyper FSDP＋Hyper Muon std loss对比](assets/veomni/loss_16die_8k_muon_std.svg)
+
+##### 8K · AdamW逐位精度对照（100步）
+
+| 对照项 | 结果 | 最大绝对差 |
+| --- | --- | --- |
+| loss | 逐位一致 | 0 |
+| grad_norm | 逐位一致 | 0 |
+| 初始权重 | 逐位一致 | — |
+| 已检查梯度 | 逐位一致 | — |
+| 已检查更新后权重 | 逐位一致 | — |
+
+16个rank、100步，共1600项逐步记录；两组输入与学习率一致。
+
+<img src="assets/veomni/strict_loss_16die_8k_adamw_100step.svg" alt="100步AdamW逐位精度验证：loss及差值" width="700">
+
+<img src="assets/veomni/strict_grad_norm_16die_8k_adamw_100step.svg" alt="100步AdamW逐位精度验证：grad_norm及差值" width="700">
 
 ### 4机64die
 
