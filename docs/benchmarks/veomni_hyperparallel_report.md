@@ -31,27 +31,7 @@ hyper_parallel:
 micro batch size=1，梯度累加数=1，GBS=16；每组100步
 ```
 
-精度验证配置：
-
-```yaml
-model:
-  optimizer:
-    type: adamw
-    lr: 1.0e-5
-    lr_decay_style: constant
-    lr_start: 0.0
-    lr_min: 0.0
-    max_grad_norm: .inf
-train:
-  seed: 42
-  enable_full_determinism: true
-```
-
-```bash
-HCCL_DETERMINISTIC=strict
-NPU_DETERMINISTIC=1
-PYTHONHASHSEED=42
-```
+精度验证仅调整：`lr_decay_style=constant`、`max_grad_norm=.inf`、`enable_full_determinism=true`；新增环境变量：`HCCL_DETERMINISTIC=strict`、`NPU_DETERMINISTIC=1`、`PYTHONHASHSEED=42`。
 
 #### 实验情况
 
