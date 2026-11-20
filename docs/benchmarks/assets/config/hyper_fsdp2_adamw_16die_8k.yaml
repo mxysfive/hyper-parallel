@@ -1,0 +1,183 @@
+model:
+  model_path: /path/to/Qwen3.5-35B-A3B
+  chat_template: qwen3vl
+  broadcast_model_weights_from_rank0: false
+  ops_implementation:
+    attn_implementation: veomni_flash_attention_2
+    rms_norm_implementation: torch_npu
+    rotary_pos_emb_implementation: torch_npu
+    cross_entropy_loss_implementation: chunk_loss
+    gated_mlp_implementation: eager
+    moe_implementation: fused_npu
+    rms_norm_gated_implementation: torch_npu
+    causal_conv1d_implementation: triton
+    chunk_gated_delta_rule_implementation: triton
+    load_balancing_loss_implementation: eager
+  optimizer:
+    type: adamw
+    state_offload: none
+    lr: 1.0e-05
+    lr_min: 1.0e-07
+    lr_start: 0.0
+    lr_warmup_ratio: 0
+    lr_decay_style: cosine
+    lr_decay_ratio: 1.0
+    weight_decay: 0
+    no_decay_modules: []
+    no_decay_params: []
+    max_grad_norm: 1.0
+    grad_clip_scope: per_module
+    betas:
+    - 0.9
+    - 0.95
+    state_offload_device_memory_fraction: 0.8
+    state_offload_pin_memory: true
+    muon_lr: null
+    muon_momentum: 0.95
+    muon_nesterov: true
+    muon_weight_decay: 0.0
+    muon_ns_steps: 5
+    muon_ns_coefficients:
+    - 3.4445
+    - -4.775
+    - 2.0315
+    muon_eps: 1.0e-07
+    muon_adjust_lr_fn: match_rms_adamw
+    muon_head_group_size: 0
+    muon_head_split_modules: []
+    muon_expert_zero_comm: false
+    muon_ns_implementation: gram_quack
+    muon_gram_ns_reset_iterations:
+    - 2
+  accelerator:
+    dp_replicate_size: 1
+    dp_shard_size: 16
+    tp_size: 1
+    ep_size: 1
+    npu_ep_hccl_buffer_mib: null
+    npu_ep_hccl_expansion_mode: null
+    ep_outside: false
+    extra_parallel_sizes:
+    - 1
+    extra_parallel_placement_innermost:
+    - false
+    extra_parallel_names:
+    - ep
+    pp_size: 1
+    ulysses_size: 1
+    enable_async: false
+    cp_size: 1
+    skip_sp_gather_between_modules: false
+    init_device: meta
+    fsdp_config:
+      fsdp_mode: hyper_fsdp2
+      fsdp_scope: module
+      reshard_after_forward: true
+      reshard_after_backward: true
+      forward_prefetch: true
+      offload: false
+      offload_pin_memory: true
+      expert_fsdp_shard_dim: null
+      expert_weight_fp8_all_gather: false
+      low_precision_reduce_scatter_comm: false
+      max_load_broadcast_size: 20.0
+      mixed_precision:
+        enable: true
+        param_dtype: bfloat16
+        reduce_dtype: float32
+        output_dtype: null
+        cast_forward_inputs: true
+        float8:
+          enable: false
+          recipe: tensorwise
+          target_modules: []
+      hyper_parallel:
+        comm_fusion: false
+        comm_fusion_vit: false
+        forward_prefetch_depth: 1
+        backward_prefetch_depth: 1
+        reduce_comm_interval: 1
+    offload_config:
+      enable_activation: false
+      activation_gpu_limit: 0.0
+      enable_async_activation: false
+      activation_offload_modules: []
+      activation_offload_host_cache_limit_gb: 4.0
+    gradient_checkpointing:
+      enable: true
+      debug: false
+      enable_reentrant: false
+      early_stop: false
+      recompute_layers: -1
+      selective_recompute_layers: 0
+      save_ops: []
+    torch_compile:
+      enable: false
+      backend: inductor
+      mode: null
+      fullgraph: true
+      dynamic: false
+  processor_config:
+    size:
+      shortest_edge: 4096
+      longest_edge: 81920
+data:
+  train_path: /path/to/qwen35_35b_a3b_8k_native_balanced
+  data_type: conversation
+  datasets_type: mapping
+  dataset_repeat: false
+  train_size: 52428800
+  max_seq_len: 8192
+  dyn_bsz_buffer_size: 32
+  mm_configs:
+    image_min_pixels: 4096
+    image_max_pixels: 4096
+    video_min_pixels: 4096
+    video_max_pixels: 4096
+    min_frames: 20
+    max_frames: 20
+    frame_factor: 2
+    fps: 2.0
+    use_audio_in_video: false
+  dataloader:
+    type: native
+    num_workers: 0
+    worker_num_threads: 1
+    prefetch_factor: null
+    persistent_workers: false
+    in_order: true
+    drop_last: true
+    shuffle: true
+    pin_memory: true
+    use_background_prefetcher: false
+  source_name: qwen_omni_offline_av
+train:
+  freeze_vit: false
+  micro_batch_size: 1
+  global_batch_size: 16
+  num_train_epochs: 1
+  max_steps: 50
+  dyn_bsz: false
+  dyn_bsz_runtime: worker
+  dyn_bsz_count_mode: total
+  pad_to_length: false
+  bsz_warmup_ratio: 0.0
+  seed: 42
+  enable_full_determinism: false
+  sync_each_train_step: false
+  empty_cache_steps: 500
+  gc_steps: 500
+  eval_steps: 0
+  eval_epochs: 0
+  checkpoint:
+    output_dir: outputs/hyper_fsdp2_adamw_16die_8k/checkpoint
+    manager: dcp
+    save_steps: 0
+    save_epochs: 0
+    save_hf_weights: false
+    hf_save_steps: 0
+    hf_save_epochs: 0
+  profile:
+    enable: false
+  wandb:
+    enable: false

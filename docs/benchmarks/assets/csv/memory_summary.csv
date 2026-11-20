@@ -1,0 +1,13 @@
+run,world_size,allocated_peak_gib,reserved_peak_gib,scope
+torch_fsdp2_adamw_64die_8k,64,20.905670642852783,25.865234375,max_over_recorded_ranks
+hyper_fsdp2_adamw_64die_8k,64,20.86513042449951,22.162109375,max_over_recorded_ranks
+hyper_fsdp2_adamw_64die_8k_deterministic,64,23.3,,epoch_log_peak_rounded
+torch_fsdp2_adamw_64die_8k_deterministic,64,23.28,,epoch_log_peak_rounded
+hyper_fsdp2_hyper_muon_64die_8k,64,19.01,,epoch_log_peak_rounded
+torch_fsdp2_hyper_muon_64die_8k,64,18.98,,epoch_log_peak_rounded
+torch_fsdp2_veomni_muon_64die_8k,64,18.98,,epoch_log_peak_rounded
+torch_fsdp2_veomni_muon_16die_8k,16,37.00169372558594,44.78515625,max_over_recorded_ranks
+torch_fsdp2_hyper_muon_16die_8k,16,37.00169372558594,44.734375,max_over_recorded_ranks
+hyper_fsdp2_hyper_muon_16die_8k,16,37.100120544433594,39.869140625,max_over_recorded_ranks
+torch_fsdp2_adamw_16die_8k,16,44.87486982345581,52.513671875,max_over_recorded_ranks
+hyper_fsdp2_adamw_16die_8k,16,44.90790367126465,46.462890625,max_over_recorded_ranks
