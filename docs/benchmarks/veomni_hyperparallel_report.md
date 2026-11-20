@@ -17,6 +17,9 @@ hyper_parallel:
 
 ## 实验一：Qwen3.5-35B-A3B
 
+均衡多模态假数据的 8K、16 / 64 die FSDP＋AdamW 对照和 profiling 分析见
+[独立报告](qwen3.5_fsdp_adam/README.md)。
+
 ### 单机16die
 
 基于 VeOmni 官方 example：[AdamW](https://github.com/ByteDance-Seed/VeOmni/blob/main/configs/multimodal/qwen3_5_moe/qwen3_5_moe_vl_ascendc.yaml)、[Muon](https://github.com/ByteDance-Seed/VeOmni/blob/main/configs/multimodal/qwen3_5_moe/qwen3_5_moe_vl_muon_ascendc.yaml)，加载完整预训练权重，其余模型、算子及优化器配置沿用对应 example。

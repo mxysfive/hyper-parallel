@@ -1,0 +1,394 @@
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/arguments/arguments_types.py:1359] 11/20/2026 07:14:58 >> Set gradient accumulation to 1.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/trainer/base.py:344] 11/20/2026 07:14:58 >> {
+  "model": {
+    "model_path": "/mnt/sfs_turbo/mxy/models/Qwen3.5-35B-A3B",
+    "config_path": "/mnt/sfs_turbo/mxy/models/Qwen3.5-35B-A3B",
+    "tokenizer_path": "/mnt/sfs_turbo/mxy/models/Qwen3.5-35B-A3B",
+    "safetensor_idx_path": null,
+    "model_config": {},
+    "processor_config": {
+      "size": {
+        "shortest_edge": 4096,
+        "longest_edge": 81920
+      }
+    },
+    "chat_template": "qwen3vl",
+    "basic_modules": [],
+    "lora_config": {},
+    "ops_implementation": {
+      "attn_implementation": "veomni_flash_attention_2",
+      "moe_implementation": "fused_npu",
+      "cross_entropy_loss_implementation": "chunk_loss",
+      "rms_norm_implementation": "torch_npu",
+      "gated_mlp_implementation": "eager",
+      "linear_implementation": null,
+      "rotary_pos_emb_implementation": "torch_npu",
+      "rotary_pos_emb_vision_implementation": null,
+      "load_balancing_loss_implementation": "eager",
+      "rms_norm_gated_implementation": "torch_npu",
+      "causal_conv1d_implementation": "triton",
+      "chunk_gated_delta_rule_implementation": "triton",
+      "qsa_attention_implementation": "eager",
+      "dsa_indexer_implementation": "eager",
+      "dsa_attention_implementation": "eager",
+      "mhc_implementation": "eager",
+      "kv_round_implementation": "none"
+    },
+    "broadcast_model_weights_from_rank0": false,
+    "ep_sharded_stream_load": false,
+    "accelerator": {
+      "dp_replicate_size": 1,
+      "dp_shard_size": 16,
+      "tp_size": 1,
+      "ep_size": 1,
+      "npu_ep_hccl_buffer_mib": null,
+      "npu_ep_hccl_expansion_mode": null,
+      "ep_outside": false,
+      "extra_parallel_sizes": [
+        1
+      ],
+      "extra_parallel_placement_innermost": [
+        false
+      ],
+      "extra_parallel_names": [
+        "ep"
+      ],
+      "pp_size": 1,
+      "ulysses_size": 1,
+      "enable_async": false,
+      "cp_size": 1,
+      "skip_sp_gather_between_modules": false,
+      "init_device": "meta",
+      "fsdp_config": {
+        "fsdp_mode": "hyper_fsdp2",
+        "fsdp_scope": "module",
+        "reshard_after_forward": true,
+        "reshard_after_backward": true,
+        "forward_prefetch": true,
+        "offload": false,
+        "offload_pin_memory": true,
+        "expert_fsdp_shard_dim": null,
+        "expert_weight_fp8_all_gather": false,
+        "low_precision_reduce_scatter_comm": false,
+        "max_load_broadcast_size": 20.0,
+        "mixed_precision": {
+          "enable": true,
+          "param_dtype": "bfloat16",
+          "reduce_dtype": "float32",
+          "output_dtype": null,
+          "cast_forward_inputs": true,
+          "float8": {
+            "enable": false,
+            "recipe": "tensorwise",
+            "target_modules": []
+          }
+        },
+        "hyper_parallel": {
+          "comm_fusion": false,
+          "comm_fusion_vit": false,
+          "forward_prefetch_depth": 1,
+          "backward_prefetch_depth": 1,
+          "reduce_comm_interval": 1
+        }
+      },
+      "offload_config": {
+        "enable_activation": false,
+        "activation_gpu_limit": 0.0,
+        "enable_async_activation": false,
+        "activation_offload_modules": [],
+        "activation_offload_host_cache_limit_gb": 4.0
+      },
+      "gradient_checkpointing": {
+        "enable": true,
+        "debug": false,
+        "enable_reentrant": false,
+        "early_stop": false,
+        "recompute_layers": -1,
+        "selective_recompute_layers": 0,
+        "save_ops": []
+      },
+      "torch_compile": {
+        "enable": false,
+        "backend": "inductor",
+        "mode": null,
+        "fullgraph": true,
+        "dynamic": false
+      }
+    },
+    "optimizer": {
+      "type": "adamw",
+      "state_offload": "none",
+      "lr": 1e-05,
+      "lr_min": 1e-07,
+      "lr_start": 0.0,
+      "lr_warmup_ratio": 0,
+      "lr_decay_style": "cosine",
+      "lr_decay_ratio": 1.0,
+      "weight_decay": 0,
+      "no_decay_modules": [],
+      "no_decay_params": [],
+      "max_grad_norm": 1.0,
+      "grad_clip_scope": "per_module",
+      "betas": [
+        0.9,
+        0.95
+      ],
+      "state_offload_device_memory_fraction": 0.8,
+      "state_offload_pin_memory": true,
+      "muon_lr": null,
+      "muon_momentum": 0.95,
+      "muon_nesterov": true,
+      "muon_weight_decay": 0.0,
+      "muon_ns_steps": 5,
+      "muon_ns_coefficients": [
+        3.4445,
+        -4.775,
+        2.0315
+      ],
+      "muon_eps": 1e-07,
+      "muon_adjust_lr_fn": "match_rms_adamw",
+      "muon_head_group_size": 0,
+      "muon_head_split_modules": [],
+      "muon_expert_zero_comm": false,
+      "muon_ns_implementation": "gram_quack",
+      "muon_gram_ns_reset_iterations": [
+        2
+      ]
+    },
+    "encoder_data_balance": false,
+    "encoder_data_balance_sorting_algo": "post_mbs_balancing_greedy_without_pad"
+  },
+  "data": {
+    "train_path": "/share/cys/code/workspace/cache/huggingface/fake_datasets/qwen35_35b_a3b_8k_native_balanced",
+    "eval_path": null,
+    "train_size": 52428800,
+    "train_sample": 10000,
+    "data_type": "conversation",
+    "datasets_type": "mapping",
+    "dataset_repeat": false,
+    "multisource_datasets_type": "interleave",
+    "source_name": "qwen_omni_offline_av",
+    "dyn_bsz_buffer_size": 32,
+    "text_keys": "messages",
+    "max_seq_len": 8192,
+    "silent_exception": false,
+    "dataloader": {
+      "type": "native",
+      "num_workers": 0,
+      "worker_num_threads": 1,
+      "prefetch_factor": null,
+      "persistent_workers": false,
+      "in_order": true,
+      "drop_last": true,
+      "shuffle": true,
+      "pin_memory": true,
+      "use_background_prefetcher": false
+    },
+    "mm_configs": {
+      "image_min_pixels": 4096,
+      "image_max_pixels": 4096,
+      "video_min_pixels": 4096,
+      "video_max_pixels": 4096,
+      "min_frames": 20,
+      "max_frames": 20,
+      "frame_factor": 2,
+      "fps": 2.0,
+      "use_audio_in_video": false
+    }
+  },
+  "train": {
+    "dyn_bsz": false,
+    "micro_batch_size": 1,
+    "global_batch_size": 16,
+    "num_train_epochs": 1,
+    "pad_to_length": false,
+    "bsz_warmup_ratio": 0.0,
+    "bsz_warmup_init_mbtoken": 200,
+    "dyn_bsz_runtime": "worker",
+    "dyn_bsz_count_mode": "total",
+    "dyn_bsz_physical_overflow_ratio": 1.5,
+    "enable_full_determinism": false,
+    "enable_batch_invariant_mode": false,
+    "sync_each_train_step": false,
+    "empty_cache_steps": 500,
+    "gc_steps": 500,
+    "eval_steps": 0,
+    "eval_epochs": 0,
+    "seed": 42,
+    "max_steps": 50,
+    "moe_load_balance_monitor_interval": 0,
+    "wandb": {
+      "enable": false,
+      "project": "VeOmni",
+      "name": null,
+      "id": null
+    },
+    "profile": {
+      "enable": false,
+      "start_step": 1,
+      "end_step": 2,
+      "trace_dir": "./trace",
+      "record_shapes": true,
+      "profile_memory": true,
+      "with_stack": true,
+      "with_modules": false,
+      "rank0_only": true
+    },
+    "channel_loss": {
+      "enable": false,
+      "interval": 10,
+      "source_id_keys": [
+        "channel_id",
+        "source_id",
+        "dataset_id",
+        "ds_idx"
+      ],
+      "source_name_keys": [
+        "channel_name",
+        "source_name",
+        "dataset_name",
+        "data_name"
+      ],
+      "extra_strip_keys": [
+        "cur_token_num"
+      ],
+      "loss_metric_prefix": "channel_loss",
+      "weighted_loss_metric_prefix": "channel_loss_weighted",
+      "token_count_metric_prefix": "channel_tokens",
+      "log_weighted_loss": true,
+      "log_token_count": true,
+      "strict": false
+    },
+    "checkpoint": {
+      "output_dir": "/experiment/veomni_extra_perf/qwen35-native8k-profile-20261120/outputs/hyper_16",
+      "manager": "dcp",
+      "save_async": false,
+      "stage_dir": null,
+      "save_timeout_seconds": null,
+      "dcp_save_to_lowest_rank": false,
+      "load_path": null,
+      "save_steps": 0,
+      "save_epochs": 0,
+      "hf_save_steps": 0,
+      "hf_save_epochs": 0,
+      "save_hf_weights": false
+    },
+    "freeze_vit": false,
+    "freeze_audio_tower": false,
+    "vit_lr": 1e-06,
+    "freeze_ple_embeddings": false,
+    "frozen_ple_dtype": null
+  }
+}
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/trainer/base.py:355] 11/20/2026 07:14:59 >> Process rank: 0, world size: 16
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/distributed/parallel_state.py:614] 11/20/2026 07:14:59 >> Initializing parallel state: dp_size 16, dp_replicate_size 1, dp_shard_size 16,tp_size 1, pp_size 1, cp_size 1, ulysses_size 1, ep_size 1
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/distributed/parallel_state.py:723] 11/20/2026 07:14:59 >> Device mesh: DeviceMesh((dp_shard=16), 'npu', stride=(1,))
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/distributed/parallel_state.py:725] 11/20/2026 07:14:59 >> ep FSDP device mesh: None
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/trainer/vlm_trainer.py:142] 11/20/2026 07:14:59 >> Build model
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/loader.py:102] 11/20/2026 07:14:59 >> Loading model from customized modeling.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/auto.py:333] 11/20/2026 07:15:00 >> We override the model’s forward method on NPU devices to ensure that the FA kwargs are on CPU, since the npu_fused_attention requires cpu FA kwargs
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/auto.py:354] 11/20/2026 07:15:00 >> Built foundation model class: veomni.models.transformers.qwen3_5_moe.generated.patched_modeling_qwen3_5_moe_npu.Qwen3_5MoeForConditionalGeneration
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:692] 11/20/2026 07:15:00 >> VRAM usage after building model: cur 0.00GB, max 0.00GB.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/distributed/torch_parallelize.py:1111] 11/20/2026 07:15:00 >> Enable gradient checkpointing.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/distributed/torch_parallelize.py:1153] 11/20/2026 07:15:00 >> Apply data parallel to the model: fsdp2.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/distributed/torch_parallelize.py:512] 11/20/2026 07:15:00 >> target classes to shard: {'Qwen3_5MoeVisionBlock', 'Qwen3_5MoeDecoderLayer'}
+[rank0]:[W1120 07:15:00.679180450 NPUCachingAllocator.cpp:204] Warning: The current CANN and HDK(driver) versions require processing for 32 padding size, with memory allocation. (function operator())
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/distributed/torch_parallelize.py:231] 11/20/2026 07:15:00 >> starting to load model weights from /mnt/sfs_turbo/mxy/models/Qwen3.5-35B-A3B...
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/distributed/torch_parallelize.py:283] 11/20/2026 07:15:00 >> Every rank would read weights from disk and expect this to be slow!
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:35 >> Unexpected key in state dict: mtp.fc.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:35 >> Unexpected key in state dict: mtp.layers.0.self_attn.o_proj.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:35 >> Unexpected key in state dict: mtp.layers.0.self_attn.q_proj.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.input_layernorm.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.mlp.experts.down_proj.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.mlp.experts.gate_up_proj.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.mlp.gate.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.mlp.shared_expert.down_proj.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.mlp.shared_expert.gate_proj.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.mlp.shared_expert.up_proj.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.mlp.shared_expert_gate.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.post_attention_layernorm.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.self_attn.k_norm.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.self_attn.k_proj.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.self_attn.q_norm.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.layers.0.self_attn.v_proj.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.norm.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.pre_fc_norm_embedding.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/weights.py:457] 11/20/2026 07:15:37 >> Unexpected key in state dict: mtp.pre_fc_norm_hidden.weight.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/checkpoint/convert.py:309] 11/20/2026 07:15:37 >> Converted fqn_to_index_mapping for HSDPQwen3_5MoeForConditionalGeneration (1811 -> 1045 entries).
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/models/registry.py:129] 11/20/2026 07:15:38 >> [PROCESSOR] Loading Qwen3VLProcessor from Huggingface as no customized processor registered.
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/data/chat_template.py:378] 11/20/2026 07:15:38 >> Qwen2VLTemplate will not truncate sequence when longer than [max_seq_lens].
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/data/dataset.py:1653] 11/20/2026 07:15:38 >> Start building mapping dataset
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/data/data_loader.py:225] 11/20/2026 07:15:42 >> Use fixed_sample_batching -->
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/trainer/callbacks/trace_callback.py:49] 11/20/2026 07:15:42 >> MoE router monitor disabled (moe_load_balance_monitor_interval=0).
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/trainer/vlm_trainer.py:406] 11/20/2026 07:15:42 >> Rank0 Start training. Start step: 0. Train steps: 50. Start epoch: 0. Train epochs: 1.
+Epoch 1/1:   0%|          | 0/50 [00:00<?, ?it/s]
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: attention_mask's shape: torch.Size([1, 8192]), device: npu:0, tensor([[1, 1, 1,  ..., 1, 1, 1]], device='npu:0')
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: image_mask's shape: torch.Size([1, 8192]), device: npu:0, tensor([[False, False, False,  ..., False, False, False]], device='npu:0')
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: video_mask's shape: torch.Size([1, 8192]), device: npu:0, tensor([[False, False, False,  ..., False, False, False]], device='npu:0')
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: mm_token_type_ids's shape: torch.Size([1, 8192]), device: npu:0, tensor([[0, 0, 0,  ..., 0, 0, 0]], device='npu:0')
+[rank0]:[W1120 07:15:42.972085940 ToKernelNpu.cpp:40] Warning: Device do not support double dtype now, dtype cast replace with float. (function operator())
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: video_grid_thw's shape: torch.Size([1, 3]), device: npu:0, tensor([[10,  4,  4]], device='npu:0')
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: cu_seq_lens_q's shape: torch.Size([2]), device: npu:0, tensor([   0, 8192], device='npu:0', dtype=torch.int32)
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: cu_seq_lens_k's shape: torch.Size([2]), device: npu:0, tensor([   0, 8192], device='npu:0', dtype=torch.int32)
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:785] 11/20/2026 07:15:42 >> [rank 0]: max_length_q's value: 8192
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:785] 11/20/2026 07:15:42 >> [rank 0]: max_length_k's value: 8192
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: linear_attn_cu_seq_lens_q's shape: torch.Size([2]), device: npu:0, tensor([   0, 8192], device='npu:0', dtype=torch.int32)
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:785] 11/20/2026 07:15:42 >> [rank 0]: packed_sequence_slices's value: ((0, 8192),)
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:785] 11/20/2026 07:15:42 >> [rank 0]: attention_mask_is_all_ones's value: True
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:785] 11/20/2026 07:15:42 >> [rank 0]: multimodal_metadata['image_grid_thw_list']'s value: [[1, 4, 4], [1, 4, 4]]
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:781] 11/20/2026 07:15:42 >> [rank 0]: multimodal_metadata['vit_image_cu_seqlens']'s shape: torch.Size([3]), device: npu:0, tensor([ 0, 16, 32], device='npu:0', dtype=torch.int32)
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:785] 11/20/2026 07:15:42 >> [rank 0]: multimodal_metadata['vit_image_max_seqlen']'s value: 16
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:785] 11/20/2026 07:15:42 >> [rank 0]: multimodal_metadata['video_grid_thw_list']'s value: [[10, 4, 4]]
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:785] 11/20/2026 07:15:42 >> [rank 0]: multimodal_metadata['vit_video_max_seqlen']'s value: 16
+Epoch 1/1:   2%|▏         | 1/50 [00:16<13:13, 16.20s/it, total_loss: 0.23, foundation_loss: 0.23, grad_norm: 101.05, lr: 0.00]
+Epoch 1/1:   4%|▍         | 2/50 [00:21<07:47,  9.73s/it, total_loss: 0.01, foundation_loss: 0.01, grad_norm: 0.33, lr: 0.00]
+Epoch 1/1:   6%|▌         | 3/50 [00:25<05:43,  7.32s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.10, lr: 0.00]
+Epoch 1/1:   8%|▊         | 4/50 [00:30<04:45,  6.20s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.08, lr: 0.00]
+Epoch 1/1:  10%|█         | 5/50 [00:34<04:10,  5.57s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.15, lr: 0.00]
+Epoch 1/1:  12%|█▏        | 6/50 [00:39<03:48,  5.19s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.05, lr: 0.00]
+Epoch 1/1:  14%|█▍        | 7/50 [00:43<03:32,  4.95s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.05, lr: 0.00]
+Epoch 1/1:  16%|█▌        | 8/50 [00:48<03:21,  4.79s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.04, lr: 0.00]
+Epoch 1/1:  18%|█▊        | 9/50 [00:52<03:11,  4.68s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.05, lr: 0.00]
+Epoch 1/1:  20%|██        | 10/50 [00:57<03:03,  4.60s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.05, lr: 0.00]
+Epoch 1/1:  22%|██▏       | 11/50 [01:01<02:57,  4.55s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.02, lr: 0.00]
+Epoch 1/1:  24%|██▍       | 12/50 [01:05<02:51,  4.52s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.03, lr: 0.00]
+Epoch 1/1:  26%|██▌       | 13/50 [01:10<02:45,  4.48s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.03, lr: 0.00]
+Epoch 1/1:  28%|██▊       | 14/50 [01:14<02:40,  4.47s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.01, lr: 0.00]
+Epoch 1/1:  30%|███       | 15/50 [01:19<02:36,  4.47s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.05, lr: 0.00]
+Epoch 1/1:  32%|███▏      | 16/50 [01:23<02:31,  4.46s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.04, lr: 0.00]
+Epoch 1/1:  34%|███▍      | 17/50 [01:28<02:28,  4.51s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.03, lr: 0.00]
+Epoch 1/1:  36%|███▌      | 18/50 [01:32<02:24,  4.51s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.05, lr: 0.00]
+Epoch 1/1:  38%|███▊      | 19/50 [01:37<02:19,  4.51s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.13, lr: 0.00]
+Epoch 1/1:  40%|████      | 20/50 [01:41<02:16,  4.56s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.09, lr: 0.00]
+Epoch 1/1:  42%|████▏     | 21/50 [01:46<02:13,  4.60s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.10, lr: 0.00]
+Epoch 1/1:  44%|████▍     | 22/50 [05:46<35:01, 75.07s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.06, lr: 0.00]
+Epoch 1/1:  46%|████▌     | 23/50 [05:50<24:14, 53.87s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.24, lr: 0.00]
+Epoch 1/1:  48%|████▊     | 24/50 [05:54<16:55, 39.05s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.17, lr: 0.00]
+Epoch 1/1:  50%|█████     | 25/50 [05:59<11:56, 28.67s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.08, lr: 0.00]
+Epoch 1/1:  52%|█████▏    | 26/50 [06:03<08:33, 21.41s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.16, lr: 0.00]
+Epoch 1/1:  54%|█████▍    | 27/50 [06:08<06:15, 16.32s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.06, lr: 0.00]
+Epoch 1/1:  56%|█████▌    | 28/50 [06:12<04:40, 12.77s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.06, lr: 0.00]
+Epoch 1/1:  58%|█████▊    | 29/50 [06:17<03:35, 10.27s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.05, lr: 0.00]
+Epoch 1/1:  60%|██████    | 30/50 [06:21<02:50,  8.52s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.04, lr: 0.00]
+Epoch 1/1:  62%|██████▏   | 31/50 [06:26<02:18,  7.30s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.11, lr: 0.00]
+Epoch 1/1:  64%|██████▍   | 32/50 [06:30<01:56,  6.46s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.04, lr: 0.00]
+Epoch 1/1:  66%|██████▌   | 33/50 [06:35<01:39,  5.87s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.05, lr: 0.00]
+Epoch 1/1:  68%|██████▊   | 34/50 [06:39<01:27,  5.45s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.02, lr: 0.00]
+Epoch 1/1:  70%|███████   | 35/50 [06:44<01:17,  5.14s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.01, lr: 0.00]
+Epoch 1/1:  72%|███████▏  | 36/50 [06:48<01:09,  4.93s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.01, lr: 0.00]
+Epoch 1/1:  74%|███████▍  | 37/50 [06:52<01:02,  4.79s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.01, lr: 0.00]
+Epoch 1/1:  76%|███████▌  | 38/50 [06:57<00:56,  4.70s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  78%|███████▊  | 39/50 [07:01<00:50,  4.63s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  80%|████████  | 40/50 [07:06<00:45,  4.58s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  82%|████████▏ | 41/50 [07:10<00:40,  4.54s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  84%|████████▍ | 42/50 [07:15<00:36,  4.51s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  86%|████████▌ | 43/50 [07:19<00:31,  4.49s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  88%|████████▊ | 44/50 [07:24<00:26,  4.48s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  90%|█████████ | 45/50 [07:28<00:22,  4.47s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  92%|█████████▏| 46/50 [07:33<00:17,  4.47s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  94%|█████████▍| 47/50 [07:37<00:13,  4.47s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  96%|█████████▌| 48/50 [07:41<00:08,  4.47s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1:  98%|█████████▊| 49/50 [07:46<00:04,  4.46s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1: 100%|██████████| 50/50 [07:50<00:00,  4.46s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+Epoch 1/1: 100%|██████████| 50/50 [07:50<00:00,  9.42s/it, total_loss: 0.00, foundation_loss: 0.00, grad_norm: 0.00, lr: 0.00]
+[INFO|/experiment/veomni_extra_perf/qwen35-35b-a3b-fsdp-20261120/src/VeOmni/veomni/utils/helper.py:692] 11/20/2026 07:23:33 >> VRAM usage after epoch 1: cur 24.53GB, max 44.91GB.
