@@ -245,7 +245,7 @@ Hyper Muon在16die和64die下都将优化器阶段缩短了约三分之一，但
 
 ### 实验配置
 
-64die，FSDP shard=64、replicate=1，SP=1、EP=8、PerLayerEngram=8，使用AdamW；对比4K、8K、16K序列。视觉塔启用`comm_fusion_vit`，专家参数沿dim-0切分。
+64die，FSDP shard=64、replicate=1，SP=1、EP=16、PerLayerEngram=8，使用AdamW；对比4K、8K、16K序列。视觉塔启用`comm_fusion_vit`，专家参数沿dim-0切分。
 
 ### 实验结果
 
@@ -269,6 +269,21 @@ Hyper Muon在16die和64die下都将优化器阶段缩短了约三分之一，但
 - **MoE流同步**：固定路由下，首次前向等待counts就绪，反向和重算复用通信metadata。
 
 ### 4K Profiling
+
+#### 未掩盖通信拆解
+
+4K序列、rank 0第15步；比例以各方案未掩盖通信总时间为分母。
+
+| 通信域 | Torch FSDP2＋AdamW（ms） | 占比 | Hyper FSDP＋AdamW（ms） | 占比 |
+| --- | ---: | ---: | ---: | ---: |
+| EP16 | 337.611 | 50.99% | 330.724 | 55.46% |
+| PLE flat64 | 115.407 | 17.43% | 107.384 | 18.01% |
+| FSDP64 | 190.160 | 28.72% | 152.674 | 25.60% |
+| EFSDP4 | 14.228 | 2.15% | 0.766 | 0.13% |
+| 其他 | 4.739 | 0.72% | 4.828 | 0.81% |
+| 合计 | 662.145 | 100% | 596.376 | 100% |
+
+与EP并发的FSDP通信计入EP；其余重叠按PLE flat64、FSDP64、EFSDP4的顺序归属。PLE flat64与FSDP64共享通信组，按All-to-All与AllGather/ReduceScatter区分。
 
 #### 前向
 
