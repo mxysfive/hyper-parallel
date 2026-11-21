@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Worker-only HSDP overlap recipe with deterministic parameter communication."""
+"""Worker-only HSDP overlap recipe for gradient communication."""
 import os
+from importlib import import_module
 
 import torch
 import torch.distributed as dist
 
-from hyper_parallel.core.pipeline_parallel import CommComputeOverlap, MetaStepType
+from hyper_parallel.core.pipeline_parallel import (
+    CommComputeOverlap, MetaStepType, PipelineStage, ScheduleInterleaved1F1B,
+)
 
 
 def initialize_device() -> torch.device:
@@ -27,8 +30,7 @@ def initialize_device() -> torch.device:
     if device_type not in ("npu", "cuda", "cpu"):
         raise ValueError(f"Unsupported pipeline test device: {device_type}")
     if device_type == "npu":
-        # The extension registers HCCL; CUDA/CPU workers need no NPU installation.
-        import torch_npu
+        import_module("torch_npu")  # Register HCCL on NPU workers.
     local_rank = int(os.environ["LOCAL_RANK"])
     device = torch.device(device_type, local_rank) if device_type != "cpu" else torch.device("cpu")
     if device_type != "cpu":
@@ -38,13 +40,10 @@ def initialize_device() -> torch.device:
     return device
 
 
-def register_hsdp_overlap(schedule, stages, device: torch.device) -> None:
-    """Use one parameter unit per stage, with no cross-thread parameter prefetch.
-
-    Different stages submit backward then forward AllGather before starting
-    their compute threads. Same-stage compute runs sequentially while retaining
-    parameters for forward; its gradient communication remains asynchronous.
-    """
+def register_hsdp_overlap(
+    schedule: ScheduleInterleaved1F1B, stages: list[PipelineStage], device: torch.device,
+) -> None:
+    """Pair one-unit stages and run concurrently when both have full parameters."""
     stage_by_index = {stage.stage_index: stage for stage in stages}
     overlap = CommComputeOverlap()
 
@@ -57,27 +56,24 @@ def register_hsdp_overlap(schedule, stages, device: torch.device) -> None:
         def execute_backward():
             if device.type != "cpu":
                 torch.accelerator.set_device_index(device)
-            handle = controller.unshard_handles.pop(backward_stage.submodule.hsdp_scheduler, None)
-            if handle is not None:
-                handle.wait()
             context.schedule._exec_step(backward_step, context.arg_mbs, context.kwarg_mbs, context.losses)
 
         def execute_forward():
             if device.type != "cpu":
                 torch.accelerator.set_device_index(device)
-            handle = controller.unshard_handles.pop(forward_stage.submodule.hsdp_scheduler, None)
-            if handle is not None:
-                handle.wait()
             context.schedule.execute_fwd_leaf(forward_step, context.arg_mbs, context.kwarg_mbs, context.losses)
 
+        backward_scheduler = backward_stage.all_hsdp_schedulers[0]
+        forward_scheduler = forward_stage.all_hsdp_schedulers[0]
         if backward_stage is forward_stage:
-            controller.retained_backward_units.add(backward_stage.submodule.hsdp_scheduler)
+            controller.retained_backward_units.add(backward_scheduler)
             execute_backward()
             execute_forward()
-            controller.retained_backward_units.remove(backward_stage.submodule.hsdp_scheduler)
+            controller.retained_backward_units.remove(backward_scheduler)
+        elif backward_scheduler.hsdp_state.is_shard or forward_scheduler.hsdp_state.is_shard:
+            execute_backward()
+            execute_forward()
         else:
-            for stage in (backward_stage, forward_stage):
-                controller.unshard_handles[stage.submodule.hsdp_scheduler] = stage.submodule.unshard(async_op=True)
             overlap.run(fwd_fn=execute_forward, bwd_fn=execute_backward)
 
     schedule.register_custom_function(MetaStepType.OVERLAP_B_F, execute_overlap)

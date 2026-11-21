@@ -387,7 +387,7 @@ class HSDPParamV2:
 
     @property
     def reduce_partial_output(self) -> Optional[torch.Tensor]:
-        """Return RS results pending replica all-reduce or gradient application."""
+        """Return reduce-scatter results accumulated before the final micro-step."""
         return self._reduce_partial_output
 
     @reduce_partial_output.setter
@@ -412,9 +412,7 @@ class HSDPParamV2:
             return self.unsharded_accumulated_grad_data.dtype
         if self.unsharded_param.grad is not None:
             return self.unsharded_grad_data.dtype
-        if self.reduce_partial_output is not None:
-            return self.reduce_partial_output.dtype
-        return self.orig_dtype
+        return self.param_dtype or self.orig_dtype
 
     def wait_reduce_scatter(self) -> None:
         """Wait before reading the result or releasing the transferred input.
@@ -435,8 +433,7 @@ class HSDPParamV2:
 
     def clear_reduce_scatter_output(self) -> None:
         """Clear the reduce-scatter output tensor to free memory."""
-        if self.reduce_scatter_comm_ctx.reduce_scatter_handle is not None:
-            raise RuntimeError("Wait for ReduceScatter before releasing its communication slot")
+        self.wait_reduce_scatter()
         self.reduce_scatter_comm_ctx.reduce_scatter_output = None
         self._grad = None
 
@@ -711,20 +708,7 @@ class HSDPParamV2:
         ]
 
     def init_unsharded_param(self) -> None:
-        """Create stable autograd identity without gathering or binding parameters.
-
-        Initialization before first use releases the temporary full allocation.
-        AllGather restores its storage later. Graphs retain this object across shards.
-        """
-        initialize_storage = not self.unsharded_param_buffers
-        if initialize_storage:
-            if self.shard_world_size <= 1 and not self.offload_to_cpu and self.param_dtype is None:
-                self.unsharded_param_buffers = [self._sharded_param_data]
-            else:
-                self.init_unsharded_param_buffers(
-                    [self.padded_sharded_param_size.numel()],
-                    [self.param_dtype or self.orig_dtype], self.shard_world_size, self.device,
-                )
+        """Initialize the stable unsharded parameter from its final output storage."""
         if len(self.unsharded_param_buffers) != 1:
             raise AssertionError(
                 f"Expected 1 unsharded_param_buffer, got {len(self.unsharded_param_buffers)}"
@@ -751,13 +735,8 @@ class HSDPParamV2:
             self.allgather_comm_ctx.allgather_output = None
 
         if hasattr(self, "_unsharded_param"):
-            # Keep one stable ``_unsharded_param`` object across unshard cycles:
-            # autograd-facing module state captured during forward must still be
-            # the same object in backward. Only its storage is refreshed above,
-            # which also avoids reusing stale weights after ``optimizer.step()``
-            # mutates the sharded local shard alone (the non-dim-0 unpack path
-            # materializes a contiguous copy, so a stale ``.data`` would not see
-            # the update).
+            # Autograd attaches gradients to the parameter object captured in forward.
+            # Keep its identity for backward and refresh its storage at each unshard.
             return
 
         unsharded_param = torch.as_strided(
@@ -776,8 +755,6 @@ class HSDPParamV2:
             unsharded_param,
             requires_grad=self.sharded_param.requires_grad,
         )
-        if initialize_storage and self.unsharded_param_buffers[0] is not self._sharded_param_data:
-            self.free_unsharded_param()
 
     def to_sharded(self) -> None:
         """Install the sharded parameter on managed modules and update state."""
@@ -1180,20 +1157,20 @@ class HSDPParamV2:
             self.unsharded_param.grad = None
         self._grad = self._grad.to(self.reduce_comm_dtype(self._grad))
         shard_dim = self.hsdp_placement.dim
-        if self.shard_world_size > 1 and shard_dim != 0:
+        if self.shard_world_size <= 1:
+            self._grad = self._grad.contiguous().view(-1)
+        elif shard_dim != 0:
             grad_chunks = torch.chunk(self._grad, self.shard_world_size, dim=shard_dim)
-            self._grad = torch.cat(grad_chunks, dim=0)
+            self._grad = torch.cat(grad_chunks, dim=0).contiguous().view(-1)
             grad_chunks = None
-        elif self.shard_world_size > 1:
+        else:
             padded_unsharded_dim0 = self.padded_sharded_param_size[0] * self.shard_world_size
             if self._grad.size(0) != padded_unsharded_dim0:
                 padded_unsharded_size = torch.Size((padded_unsharded_dim0, *self._grad.shape[1:]))
                 padded_grad = self._grad.new_zeros(padded_unsharded_size)
                 padded_grad.narrow(0, 0, self._grad.size(0)).copy_(self._grad)
                 self._grad = padded_grad
-        # Split weight backward may supply transposed gradients. Pack logical
-        # element order for communication, retaining the view for contiguous inputs.
-        self._grad = self._grad.reshape(-1)
+            self._grad = self._grad.contiguous().view(-1)
         apply_gradient_scaling_factor(self._grad, self.gradient_scaling_factor)
 
         shard_process_group = self.mesh_info.shard_process_group if isinstance(self.mesh_info, FSDPMeshInfo) else None

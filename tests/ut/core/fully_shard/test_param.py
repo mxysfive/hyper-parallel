@@ -134,6 +134,10 @@ class TestTorchHSDPParamHelpers(unittest.TestCase):
         hsdp_param.reduce_dtype = torch.float16
         self.assertEqual(hsdp_param.reduce_comm_dtype(grad), torch.float16)
 
+        hsdp_param.reduce_dtype = None
+        hsdp_param.param_dtype = torch.bfloat16
+        self.assertEqual(hsdp_param.reduce_comm_dtype(), torch.bfloat16)
+
     def test_dim0_uneven_init_and_reset_keep_actual_shape_on_padded_storage(self):
         """Parameter lifecycle should expose the N-D shard while retaining zero padding."""
         module = torch.nn.Module()
@@ -607,6 +611,24 @@ class TestTorchHSDPParamHelpers(unittest.TestCase):
         hsdp_param.clear_all_reduce_output()
         self.assertIsNone(hsdp_param.reduce_scatter_comm_ctx.reduce_scatter_output)
         self.assertIsNone(hsdp_param.all_reduce_comm_ctx.all_reduce_output)
+
+    def test_clear_reduce_scatter_output_is_idempotent(self):
+        """Clearing a slot waits its work once and preserves subsequent gradients."""
+        hsdp_param = _new_param()
+        work = MagicMock()
+        current_grad = torch.ones(2)
+        hsdp_param.unsharded_param.grad = current_grad
+        hsdp_param.reduce_scatter_comm_ctx.reduce_scatter_handle = work
+        hsdp_param.reduce_scatter_comm_ctx.reduce_scatter_output = torch.ones(2)
+        input_storage = hsdp_param._grad.untyped_storage()
+
+        hsdp_param.clear_reduce_scatter_output()
+        hsdp_param.clear_reduce_scatter_output()
+
+        work.wait.assert_called_once_with()
+        self.assertEqual(input_storage.nbytes(), 0)
+        self.assertIsNone(hsdp_param.reduce_scatter_comm_ctx.reduce_scatter_output)
+        self.assertIs(hsdp_param.unsharded_param.grad, current_grad)
 
     def test_apply_reduced_grad_assigns_and_accumulates(self):
         """Reduced gradients should assign new grads and accumulate existing grads."""

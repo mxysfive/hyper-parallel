@@ -73,6 +73,7 @@ class HSDPSchedulerContext:
     """Share scheduler and backward-pipeline state within one HSDP module tree."""
 
     def __init__(self) -> None:
+        """Initialize bookkeeping and communication queues for a module tree."""
         self.is_last_backward: bool = True
         self.root_module = None
         # Compile tracing may enter the root more than once; initialize shared
@@ -252,18 +253,13 @@ class HSDPSchedulerV2:
             raise ValueError(f"requires_grad_sync should be a bool, got {type(requires_grad_sync)}")
         self.hsdp_state.set_requires_grad_sync(requires_grad_sync)
 
-    # pylint: disable=W0613
     def lazy_init(self) -> None:
-        """Register one module tree and initialize each management unit once.
-
-        Pipeline construction and normal forward hooks share this entry. A
-        grouped scheduler may appear through several modules in the same tree.
-        Moving an initialized scheduler to another tree is unsupported.
-        """
+        """Register the module tree and initialize its sharded states once."""
         if self.scheduler_ctx.lazy_init_done:
             return
         # HSDPModule imports the scheduler to implement its public API.
-        from hyper_parallel.core.fully_shard.api import HSDPModule
+        from hyper_parallel.core.fully_shard.api import HSDPModule  # pylint: disable=import-outside-toplevel
+        # Share the root context and register each unit's module name once.
         if self.scheduler_ctx.root_module is None:
             tree_ctx = self.scheduler_ctx
             tree_ctx.root_module = self.cell
@@ -272,7 +268,7 @@ class HSDPSchedulerV2:
                 if not isinstance(module, HSDPModule):
                     continue
                 submod_scheduler = module.hsdp_scheduler
-                if submod_scheduler in registered_schedulers:
+                if submod_scheduler is None or submod_scheduler in registered_schedulers:
                     continue
                 registered_schedulers.add(submod_scheduler)
                 if submod_scheduler.scheduler_ctx is not tree_ctx:
@@ -282,14 +278,15 @@ class HSDPSchedulerV2:
                     submod_scheduler.hsdp_state.scheduler_ctx = tree_ctx
                     if submod_scheduler.hsdp_state.param_group is not None:
                         submod_scheduler.hsdp_state.param_group.comm_ctx = tree_ctx.param_group_comm_ctx
-                submod_scheduler._is_root = submod_scheduler is self
+                submod_scheduler._is_root = submod_scheduler is self  # pylint: disable=protected-access
                 submod_scheduler.hsdp_state.module_name = module_name
                 tree_ctx.all_hsdp_schedulers.append(submod_scheduler)
+        # Initialize parameter names and reset sharded state.
         self._init_params_fqn()
         self._lazy_init_all_states()
         self.scheduler_ctx.lazy_init_done = True
 
-    def _hsdp_forward_pre_hook(self, cell, args, kwargs):
+    def _hsdp_forward_pre_hook(self, _cell, args, kwargs):
         """Forward pre hook to unsharded parameter for forward process."""
         logger.debug("hook=forward_pre enter module=%s", self.hsdp_state)
         if self.scheduler_state == FSDPSchedulerState.PRE_BACKWARD:
@@ -324,9 +321,6 @@ class HSDPSchedulerV2:
                 hsdp_state = submod_scheduler.hsdp_state
                 if hsdp_state:
                     hsdp_state.lazy_init()
-                    if not hsdp_state.comm_fusion_policy.enable_comm_fusion:
-                        for param in hsdp_state.hsdp_params:
-                            param.init_unsharded_param()
 
     def _init_params_fqn(self):  # pylint: disable=W0212
         if not self._is_root or self.scheduler_ctx.root_module is None:
@@ -382,9 +376,8 @@ class HSDPSchedulerV2:
         """Backward pre hook to unsharded parameter for backward process."""
         logger.debug("hook=backward_pre enter module=%s", self.hsdp_state)
         self.scheduler_state = FSDPSchedulerState.PRE_BACKWARD
-        # Backward may follow a previous backward that released the parameters,
-        # even when forward itself retained them.
         with profiler_record(f"pre_backward unshard:{self.hsdp_state.module_name}"):
+            logger.debug("hook=backward_pre action=unshard module=%s", self.hsdp_state)
             self.hsdp_state.unshard()
         for prefetch_cell in self.backward_prefetch_cells:
             prefetch_state = prefetch_cell.hsdp_scheduler.hsdp_state

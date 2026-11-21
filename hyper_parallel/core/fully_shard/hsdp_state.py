@@ -297,23 +297,6 @@ class HSDPStateV2:
                 reduce_scatter_reduce_op=self.reduce_op_type,
             )
 
-    def prepare_gradients(self) -> None:
-        """Accumulate full gradients and release parameters when no graph needs them.
-
-        This action never submits or waits for communication. The caller must
-        protect parameters referenced by an outstanding split backward.
-        """
-        for hsdp_param in self.hsdp_params:
-            hsdp_param.accumulate_unsharded_grad_if_needed()
-        if not self.reduce_grads:
-            if self.reshard_after_backward:
-                self.shard()
-            for hsdp_param in self.hsdp_params:
-                hsdp_param.to_accumulated_grad_if_needed()
-        elif self.reshard_after_backward:
-            # Reshard before gradient communication to reduce backward memory peak.
-            self.shard()
-
     def post_backward(self, *unused):  # pylint: disable=unused-argument
         """Reduce gradients and reshard parameters after backward."""
         logger.debug(
@@ -356,27 +339,7 @@ class HSDPStateV2:
         2. For params with all_reduce needs: allocate fused buffer and issue reduce_scatter
            into aligned views, enabling zero-copy fused all_reduce later.
         """
-        # Collect parameters that need gradient reduction
-        params_to_reduce = []
-        for hsdp_param in self.hsdp_params:
-            skip_param = (
-                not hasattr(hsdp_param, "_unsharded_param")
-                or not hsdp_param.unsharded_param_buffers
-                or not hsdp_param.sharded_param.requires_grad
-                or (
-                    hsdp_param.unsharded_param.grad is None
-                    and hsdp_param.unsharded_accumulated_grad_data is None
-                    and not (
-                        self.requires_all_reduce
-                        and hsdp_param.replicate_world_size > 1
-                        and hsdp_param.reduce_partial_output is not None
-                    )
-                )
-            )
-            if skip_param:
-                continue
-            params_to_reduce.append(hsdp_param)
-
+        params_to_reduce = [param for param in self.hsdp_params if self._needs_gradient_reduction(param)]
         params_without_all_reduce = []
         all_reduce_groups = []
 
@@ -440,6 +403,17 @@ class HSDPStateV2:
         # Empty slots preserve the interval measured in non-fused module units.
         self.scheduler_ctx.pre_reduce_scatter_params.append(params_without_all_reduce)
         self.scheduler_ctx.pre_all_reduce_groups.append(all_reduce_groups)
+
+    def _needs_gradient_reduction(self, param: HSDPParamV2) -> bool:
+        """Check for full gradients or shards to synchronize across replicas."""
+        full_param = getattr(param, "unsharded_param", None)
+        if full_param is None or not param.unsharded_param_buffers or not param.sharded_param.requires_grad:
+            return False
+        return (
+            full_param.grad is not None
+            or param.unsharded_accumulated_grad_data is not None
+            or (self.requires_all_reduce and param.replicate_world_size > 1 and param.reduce_partial_output is not None)
+        )
 
     def _wait_prev_reduce_scatter(self) -> List[AllReduceParamGroup]:
         """Wait the oldest unit's reduce-scatter before replica all-reduce.

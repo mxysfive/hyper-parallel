@@ -207,7 +207,8 @@ class PipelineScheduleRuntime(ABC):
         if swap and self.fsdp_comm_controller.stage_contexts:
             raise ValueError("HSDP pipeline stages do not support activation swap")
         for stage in self.stages:
-            stage.fsdp_comm_controller = self.fsdp_comm_controller
+            if stage.all_hsdp_schedulers:
+                stage.fsdp_comm_controller = self.fsdp_comm_controller
         self._init_stages()
         self._build_stage_to_rank_index()
         self.fwd_handle_cache = {}

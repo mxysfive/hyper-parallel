@@ -17,7 +17,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import torch
 from torch import nn
 
 from hyper_parallel.core.fully_shard.api import HSDPModule
@@ -46,6 +45,7 @@ def _managed_stage(stage_index=0, unit_count=1):
         scheduler.scheduler_ctx = context
         scheduler.reshard_after_forward = True
         scheduler.hsdp_state = MagicMock(spec=HSDPStateV2)
+        scheduler.hsdp_state.scheduler_ctx = context
         scheduler.hsdp_state.hsdp_params = []
         scheduler.hsdp_state.reshard_after_backward = True
         scheduler.hsdp_state.reduce_grads = True
@@ -63,7 +63,6 @@ class TestFSDPConfiguration(unittest.TestCase):
     def test_plain_stage_is_no_op(self):
         stage = PipelineStageBase(nn.Linear(2, 2), 0, 1)
         controller = FSDPCommController([stage], 2)
-        stage.fsdp_comm_controller = controller
         stage._configure_forward()
         stage._configure_backward(0)
         controller.reduce_dw_gradients(0)
@@ -163,40 +162,62 @@ class TestFSDPConfiguration(unittest.TestCase):
         controller.reduction_tail_stage = 0
         events = []
         root_state = schedulers[0].hsdp_state
+        queue = root_state.scheduler_ctx.pre_reduce_scatter_params
+        queue.extend([[], []])
+
+        def wait_shards():
+            queue.popleft()
+            events.append("wait old shards")
+
         root_state._wait_prev_reduce_scatter.side_effect = lambda: events.append("wait old groups") or []
-        root_state._wait_prev_reduce_scatter_without_all_reduce.side_effect = lambda: events.append("wait old shards")
+        root_state._wait_prev_reduce_scatter_without_all_reduce.side_effect = wait_shards
         root_state._issue_prev_fused_all_reduce.side_effect = lambda groups: events.append("submit old all reduce")
         for index, scheduler in enumerate(schedulers):
-            scheduler.hsdp_state.prepare_gradients.side_effect = lambda index=index: events.append(("prepare", index))
+            param = MagicMock()
+            scheduler.hsdp_state.hsdp_params = [param]
+            param.accumulate_unsharded_grad_if_needed.side_effect = (
+                lambda index=index: events.append(("prepare", index))
+            )
             scheduler.hsdp_state._issue_reduce_scatter_for_current_module.side_effect = (
                 lambda index=index: events.append(("submit", index))
             )
         controller.reduce_dw_gradients(0)
-        self.assertEqual(events, ["wait old groups", "wait old shards", ("prepare", 0), ("prepare", 1),
-                                  ("submit", 0), ("submit", 1), "submit old all reduce"])
+        self.assertEqual(events, [
+            "wait old groups", "wait old shards", "wait old groups", "wait old shards",
+            ("prepare", 0), ("prepare", 1), ("submit", 0), ("submit", 1), "submit old all reduce",
+        ])
         schedulers[0].flush_reduce_scatter.assert_not_called()
 
     def test_unit_backward_keeps_reduction_order_and_empty_units_do_not_consume(self):
         """Only a parameter-owning PP unit advances the module reduction pipeline."""
         stage, (root, child) = _managed_stage(unit_count=2)
         controller = FSDPCommController([stage], 2)
-        child.hsdp_state.hsdp_params = [object()]
+        param = MagicMock()
+        child.hsdp_state.hsdp_params = [param]
+        queue = child.scheduler_ctx.pre_reduce_scatter_params
+        queue.append([param])
         events = []
-        child.hsdp_state.prepare_gradients.side_effect = lambda: events.append("prepare")
+        param.accumulate_unsharded_grad_if_needed.side_effect = lambda: events.append("accumulate")
+
+        def wait_shards():
+            queue.popleft()
+            events.append("wait shards")
+
         child.hsdp_state._wait_prev_reduce_scatter.side_effect = lambda: events.append("wait groups") or []
-        child.hsdp_state._wait_prev_reduce_scatter_without_all_reduce.side_effect = lambda: events.append("wait shards")
+        child.hsdp_state._wait_prev_reduce_scatter_without_all_reduce.side_effect = wait_shards
         child.hsdp_state._issue_reduce_scatter_for_current_module.side_effect = lambda: events.append("submit current")
-        child.hsdp_state._issue_prev_fused_all_reduce.side_effect = lambda groups: events.append("submit old all reduce")
+        child.hsdp_state._issue_prev_fused_all_reduce.side_effect = lambda _: events.append("submit old all reduce")
 
         controller.post_backward(root.hsdp_state)
-        root.hsdp_state.prepare_gradients.assert_called_once_with()
         root.hsdp_state._wait_prev_reduce_scatter.assert_not_called()
         root.hsdp_state._wait_prev_reduce_scatter_without_all_reduce.assert_not_called()
         root.hsdp_state._issue_reduce_scatter_for_current_module.assert_not_called()
         controller.post_backward(child.hsdp_state)
-        self.assertEqual(events, ["prepare", "wait groups", "wait shards", "submit current", "submit old all reduce"])
+        self.assertEqual(events, [
+            "accumulate", "wait groups", "wait shards", "submit current", "submit old all reduce",
+        ])
 
-    def test_finalize_rejects_incomplete_graphs_and_handles(self):
+    def test_finalize_rejects_incomplete_graphs_and_retained_units(self):
         stage, _ = _managed_stage()
         controller = FSDPCommController([stage], 1)
         with self.assertRaisesRegex(RuntimeError, "did not complete"):
@@ -206,8 +227,8 @@ class TestFSDPConfiguration(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unfinished weight"):
             controller.finalize()
         controller.dx_microbatches[0].clear()
-        controller.unshard_handles[object()] = object()
-        with self.assertRaisesRegex(RuntimeError, "consume parameter handles"):
+        controller.retained_backward_units.add(object())
+        with self.assertRaisesRegex(RuntimeError, "release retained units"):
             controller.finalize()
 
     def test_finalize_restores_each_unit_and_preserves_context_identity(self):
@@ -257,7 +278,7 @@ class TestFSDPConfiguration(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "storage"):
             FSDPCommController(stages, 1)
         stage, _ = _managed_stage()
-        other = SimpleNamespace(stage_index=2, submodule=stage.submodule)
+        other = SimpleNamespace(stage_index=2, submodule=stage.submodule, all_hsdp_schedulers=stage.all_hsdp_schedulers)
         with self.assertRaisesRegex(ValueError, "share an HSDP scheduler"):
             FSDPCommController([stage, other], 1)
 

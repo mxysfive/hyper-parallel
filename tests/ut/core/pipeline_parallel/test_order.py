@@ -725,7 +725,7 @@ class TestParseAndValidate(unittest.TestCase):
 
     def test_pipeline_swap_accepts_pytorch_backend(self):
         """The PyTorch backend builds the same swap metastep lifecycle."""
-        stage = Mock(stage_index=0, stage_num=4, submodule=Mock(), pp_group=None)
+        stage = Mock(stage_index=0, stage_num=4, submodule=Mock(), pp_group=None, all_hsdp_schedulers=[])
         stage.submodule.parameters.return_value = ()
         with patch.object(Schedule1F1B, "_check_stages", return_value=[stage]), \
              patch.object(scheduler_module, "unregister_layer_swap_hooks"):

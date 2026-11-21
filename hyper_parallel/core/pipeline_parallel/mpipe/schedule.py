@@ -22,7 +22,6 @@ import logging
 from typing import Callable, Optional, TYPE_CHECKING
 
 from torch.nn import Module
-from hyper_parallel.core.fully_shard.api import HSDPModule
 
 from hyper_parallel.core.pipeline_parallel.mpipe.executor import MPipeTransposeExecutor
 
@@ -197,7 +196,7 @@ class ScheduleMPipeTranspose(ScheduleInterleaved1F1B):
                 f"overflow_mode must be 'full' or 'min', got {overflow_mode!r}"
             )
         stages = self._check_stages(stages)
-        if any(isinstance(stage.submodule, HSDPModule) for stage in stages):
+        if any(stage.all_hsdp_schedulers for stage in stages):
             raise ValueError("MPipe does not support HSDP pipeline stages")
         self._overflow_mode = overflow_mode
         # ``preprocess_module`` is the resolved block to transpose (first T text

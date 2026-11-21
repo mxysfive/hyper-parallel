@@ -267,42 +267,21 @@ The [PP+EP overlap example](../../examples/torch/pp_overlap/pp_overlap_moe_examp
 
 ---
 
-## HSDP callbacks and communication lifetime
+## HSDP gradient overlap
 
-`PipelineContext.fsdp_comm_controller` references the schedule's controller. Its
-`stage_contexts` keep the original HSDP communication queues separate; a context
-switch never moves or aliases queues. While a run is active, the existing module
-backward hooks delegate gradient processing to this controller. It calls HSDPState's
-preparation and communication primitives directly, preserving the wait-old,
-submit-current, submit-old-AllReduce order at parameter-owning units. Empty units
-do not consume another unit's tail. Successful finalization removes the delegation;
-standalone FSDP keeps its original `post_backward()` behavior.
+In full backward, HSDP launches ReduceScatter as each unit finishes computing its
+parameter gradients. The next unit's backward or a later pipeline step can overlap
+the reduction. With split backward, the pipeline launches reductions as a batch
+after weight-gradient computation finishes.
 
-The available communication actions return `None`:
+A custom `OVERLAP_B_F` callback can run backward then forward on the same stage.
+To reuse its full parameters during forward, add the corresponding schedulers to
+`PipelineContext.fsdp_comm_controller.retained_backward_units` for the duration of
+both calls. The forward then has a window to overlap the backward tail reduction.
 
-- `reduce_dw_gradients(stage_index)` runs after the entire weight backward and
-  submits every ready unit before waiting for any newly submitted ReduceScatter.
-- `flush_reduce_scatter(stage_index)` consumes that stage's submitted ReduceScatter
-  and launches ready replica AllReduce work.
-- `wait_all_reduce(stage_index)` waits submitted AllReduce work without launching
-  another ReduceScatter.
-
-Stage entry points already submit gradients at the correct boundary. A callback
-must not submit them again. Calling either explicit wait action chooses an earlier
-consumption boundary; returning from an overlap callback does not wait gradient
-communication by itself.
-
-For the same stage, execute backward then forward sequentially. Register the units
-whose full parameters the next forward will reuse in `retained_backward_units`,
-then remove them when the forward finishes. Different stages can compute through
-`CommComputeOverlap`, with one gradient-producing path. Their callback owns the
-collective order shared by all ranks, device streams, and producer/consumer event
-dependencies. Both compute paths must finish before the callback returns.
-
-The following recipe assumes exactly one parameter-management unit per stage and
-no cross-thread parameter prefetch. It submits backward then forward AllGather
-before starting compute; each consumer waits its own handle on its current stream.
-This fixes data-parallel collective submission order for that model structure.
+This example uses one HSDP unit per stage. For different stages it runs concurrently
+when both stages already have their full parameters. The callback owns the collective
+order and stream dependencies and joins both paths before returning.
 
 ```python
 import torch
@@ -312,60 +291,34 @@ stage_by_index = {stage.stage_index: stage for stage in stages}
 overlap = CommComputeOverlap()
 
 def execute_overlap(step, context):
-    backward_step, forward_step = step.sub_steps
-    backward_stage = stage_by_index[backward_step.stage_index]
-    forward_stage = stage_by_index[forward_step.stage_index]
-    controller = context.fsdp_comm_controller
+    backward, forward = step.sub_steps
+    backward_stage = stage_by_index[backward.stage_index]
+    forward_stage = stage_by_index[forward.stage_index]
+    backward_unit = backward_stage.all_hsdp_schedulers[0]
+    forward_unit = forward_stage.all_hsdp_schedulers[0]
+    retained_units = context.fsdp_comm_controller.retained_backward_units
 
-    def execute_backward():
+    def run_backward():
         torch.accelerator.set_device_index(device)
-        handle = controller.unshard_handles.pop(backward_stage.submodule.hsdp_scheduler, None)
-        if handle is not None:
-            handle.wait()
-        context.schedule._exec_step(
-            backward_step, context.arg_mbs, context.kwarg_mbs, context.losses,
-        )
+        context.schedule._exec_step(backward, context.arg_mbs, context.kwarg_mbs, context.losses)
 
-    def execute_forward():
+    def run_forward():
         torch.accelerator.set_device_index(device)
-        handle = controller.unshard_handles.pop(forward_stage.submodule.hsdp_scheduler, None)
-        if handle is not None:
-            handle.wait()
-        context.schedule.execute_fwd_leaf(
-            forward_step, context.arg_mbs, context.kwarg_mbs, context.losses,
-        )
+        context.schedule.execute_fwd_leaf(forward, context.arg_mbs, context.kwarg_mbs, context.losses)
 
     if backward_stage is forward_stage:
-        controller.retained_backward_units.add(backward_stage.submodule.hsdp_scheduler)
-        execute_backward()
-        execute_forward()
-        controller.retained_backward_units.remove(backward_stage.submodule.hsdp_scheduler)
+        retained_units.add(backward_unit)
+        run_backward()
+        run_forward()
+        retained_units.remove(backward_unit)
+    elif backward_unit.hsdp_state.is_shard or forward_unit.hsdp_state.is_shard:
+        run_backward()
+        run_forward()
     else:
-        for stage in (backward_stage, forward_stage):
-            controller.unshard_handles[stage.submodule.hsdp_scheduler] = stage.submodule.unshard(async_op=True)
-        overlap.run(fwd_fn=execute_forward, bwd_fn=execute_backward)
+        overlap.run(fwd_fn=run_forward, bwd_fn=run_backward)
 
 schedule.register_custom_function(MetaStepType.OVERLAP_B_F, execute_overlap)
 ```
-
-With `enable_dxdw_split=True`, input backward submits no new gradient reductions;
-the separate weight MetaStep submits them after computation. Stage zero uses full
-backward. More than one unit per stage requires the callback to arrange its internal
-communication boundaries too. Independent device streams additionally require
-producer events and waits on every actual consuming stream. Thread completion does
-not establish those device dependencies. Device timelines, rather than outstanding
-work handles, determine whether communication physically overlaps computation.
-
-The distributed parity recipes are in `tests/torch/pipeline_parallel/test_pp_composite.py`.
-Set `HYPER_PARALLEL_PP_DEVICE_TYPE=npu` or `cuda` for the target accelerator; explicit
-`cpu` runs the MLP Gloo correctness checks with only accelerator device resolution mocked. The eight-rank recipes cover PP=2/HSDP=(2,2)
-with checkpointing and concurrent overlap, and PP=4/HSDP=(1,2) with GPipe/1F1B.
-Collect profiler traces and synchronized step time/peak memory on each accelerator
-before making performance claims. CPU runs do not validate device overlap. The TP
-composite also checks gradients and parameter updates, normalizing both the repeated
-DP batch and TP-replicated scalar loss. It requires an accelerator backend: PyTorch
-2.9's Gloo differentiable AllGather backward uses invalid global source ranks for TP
-subgroups.
 
 ---
 

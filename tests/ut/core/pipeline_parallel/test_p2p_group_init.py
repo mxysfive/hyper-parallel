@@ -43,6 +43,7 @@ class TestBatchP2PGroupInitialization(unittest.TestCase):
             pp_group=mock.sentinel.pp_group,
             has_backward=False,
             submodule=torch.nn.Identity(),
+            all_hsdp_schedulers=[],
             _dw_cache={},
         )]
         schedule.real_stage_num = 2

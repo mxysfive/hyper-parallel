@@ -47,6 +47,20 @@ class _CheckpointModel(nn.Module):
         return self.layers(inputs)
 
 
+class _ConditionalModel(nn.Module):
+    """Exercise a child that first gathers its parameters on a later microbatch."""
+
+    def __init__(self):
+        super().__init__()
+        self.always = nn.Linear(2, 2, bias=False)
+        self.optional = nn.Linear(2, 2, bias=False)
+
+    def forward(self, inputs: torch.Tensor, use_optional: bool) -> torch.Tensor:
+        """Run the optional child when selected."""
+        output = self.always(inputs)
+        return self.optional(output) if use_optional else output
+
+
 class TestFSDPStageAutograd(unittest.TestCase):
     """Use real parameters and hooks without initializing distributed processes."""
 
@@ -90,10 +104,12 @@ class TestFSDPStageAutograd(unittest.TestCase):
                 tensor.mul_(group.size())
             return MagicMock() if async_op else None
 
-        with patch.object(DeviceMesh, "get_group", new=mesh_group), \
-                patch("hyper_parallel.core.fully_shard.hsdp_param.dist.all_gather_into_tensor", side_effect=all_gather), \
-                patch("hyper_parallel.core.fully_shard.hsdp_param.dist.reduce_scatter_tensor", side_effect=reduce_scatter), \
-                patch("hyper_parallel.core.fully_shard.param_group.dist.all_reduce", side_effect=all_reduce):
+        with (
+            patch.object(DeviceMesh, "get_group", new=mesh_group),
+            patch("hyper_parallel.core.fully_shard.hsdp_param.dist.all_gather_into_tensor", side_effect=all_gather),
+            patch("hyper_parallel.core.fully_shard.hsdp_param.dist.reduce_scatter_tensor", side_effect=reduce_scatter),
+            patch("hyper_parallel.core.fully_shard.param_group.dist.all_reduce", side_effect=all_reduce),
+        ):
             mesh = DeviceMesh("cpu", torch.arange(torch.tensor(mesh_shape).prod()).reshape(mesh_shape).tolist(),
                               mesh_dim_names=("replicate", "shard"), _init_backend=False)
             model = _CheckpointModel(checkpointing)
@@ -115,7 +131,7 @@ class TestFSDPStageAutograd(unittest.TestCase):
             self.assertEqual(len(controller.stage_schedulers[1]), (2 if grouped else 3) if nested else 1)
             optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
             reference_optimizer = torch.optim.SGD(reference.parameters(), lr=0.01)
-            full_parameters = stage._get_trainable_params()
+            full_parameters = None
 
             for training_step in range(3):
                 optimizer.zero_grad(set_to_none=True)
@@ -130,6 +146,8 @@ class TestFSDPStageAutograd(unittest.TestCase):
                         reference_loss = reference_loss * (mesh_shape[0] * mesh_shape[1])
                     reference_loss.backward()
                     stage.forward_one_chunk(micro_index)
+                    if full_parameters is None:
+                        full_parameters = stage._get_pp_autograd_params()
                     if split:
                         stage.backward_input_one_chunk(micro_index)
                 for micro_index in (2, 0, 1):
@@ -145,7 +163,7 @@ class TestFSDPStageAutograd(unittest.TestCase):
                 reference_optimizer.step()
                 for actual, expected in zip(model.parameters(), reference.parameters()):
                     torch.testing.assert_close(actual.to_local(), expected.chunk(mesh_shape[1], dim=0)[0])
-                self.assertIs(stage._get_trainable_params(), full_parameters)
+                self.assertIs(stage._get_pp_autograd_params(), full_parameters)
                 self.assertFalse(controller.stage_contexts[1].defer_grad_finalize)
                 self.assertIsNone(controller.stage_contexts[1].post_backward_handler)
 
@@ -171,13 +189,42 @@ class TestFSDPStageAutograd(unittest.TestCase):
             with self.subTest(split=split):
                 self._run_policy((2, 2), True, True, True, split, True, True, grouped=True)
 
+    def test_split_backward_uses_full_parameter_first_seen_on_later_forward(self):
+        """A late parameter participates in dW and earlier dX group identities survive."""
+        model = _ConditionalModel()
+        reference = copy.deepcopy(model)
+        fully_shard(model.optional, mesh=self.mesh)
+        fully_shard(model, mesh=self.mesh)
+        model.set_reshard_after_forward(True)
+        stage = PipelineStage(model, 1, 3, device=torch.device("cpu"))
+        controller = FSDPCommController([stage], 2)
+        stage.fsdp_comm_controller = controller
+        controller.begin()
+
+        self.assertEqual(stage._get_pp_autograd_params(), ())
+        for micro_index, use_optional in enumerate((False, True)):
+            inputs = torch.ones(1, 2, requires_grad=True)
+            stage.args_recv_info[micro_index] = [SimpleNamespace(buffer=inputs, requires_grad=True)]
+            stage.grad_recv_info[micro_index] = [SimpleNamespace(buffer=torch.ones_like(inputs))]
+            reference(inputs.detach(), use_optional).sum().backward()
+            stage.forward_one_chunk(micro_index, kwargs={"use_optional": use_optional})
+            self.assertEqual(len(stage._get_pp_autograd_params()), micro_index + 1)
+            stage.backward_input_one_chunk(micro_index)
+
+        for micro_index in (0, 1):
+            stage.backward_weight_one_chunk(micro_index)
+        controller.finalize()
+
+        for actual, expected in zip(model.parameters(), reference.parameters()):
+            torch.testing.assert_close(actual.grad.to_local(), expected.grad)
+
     def test_async_unshard_reuses_work_and_completed_parameters(self):
         group = MagicMock(spec=torch.distributed.ProcessGroup)
         group.rank.return_value = 0
         group.size.return_value = 2
         work = MagicMock()
 
-        def all_gather(output, tensor, **kwargs):
+        def all_gather(output, tensor, **_kwargs):
             output.copy_(tensor.repeat(2))
             return work
 
@@ -248,7 +295,7 @@ class TestFSDPStageAutograd(unittest.TestCase):
         stage.backward_one_chunk(0)
         controller.finalize()
         reference(inputs).sum().backward()
-        self.assertIs(stage._get_trainable_params()[0], ignored_param)
+        self.assertIs(stage._get_pp_autograd_params()[0], ignored_param)
         torch.testing.assert_close(ignored_param.grad, reference.layers[0].weight.grad)
         self.assertIsNone(model.layers[2].weight.grad)
 
@@ -269,6 +316,7 @@ class TestFSDPStageAutograd(unittest.TestCase):
         reference = copy.deepcopy(model)
         fully_shard(model, mesh=self.mesh)
         model.set_reduce_op_type("sum")
+        model.set_reduce_comm_interval(3)
         stage = PipelineStage(model, 0, 1, device=torch.device("cpu"))
         controller = FSDPCommController([stage], 2)
         stage.fsdp_comm_controller = controller
@@ -308,12 +356,13 @@ class TestFSDPStageAutograd(unittest.TestCase):
             stage.grad_recv_info[micro_index] = [SimpleNamespace(buffer=torch.ones(1, 2))]
             stage.forward_one_chunk(micro_index)
             stage.backward_one_chunk(micro_index)
-            self.assertEqual(context.pre_reduce_scatter_params, model.layers[0].hsdp_scheduler.hsdp_state.hsdp_params)
+            self.assertEqual(list(context.pre_reduce_scatter_params),
+                             [model.layers[0].hsdp_scheduler.hsdp_state.hsdp_params])
             reference(inputs.detach()).sum().backward()
 
         original_post_backward.assert_not_called()
         controller.finalize()
-        self.assertEqual(context.pre_reduce_scatter_params, [])
+        self.assertFalse(context.pre_reduce_scatter_params)
         self.assertIsNone(context.post_backward_handler)
         for actual, expected in zip(model.parameters(), reference.parameters()):
             torch.testing.assert_close(actual.grad.to_local(), expected.grad)
@@ -322,6 +371,6 @@ class TestFSDPStageAutograd(unittest.TestCase):
         model(inputs).sum().backward()
         reference(inputs.detach()).sum().backward()
         original_post_backward.assert_called_once_with()
-        self.assertEqual(context.pre_reduce_scatter_params, [])
+        self.assertFalse(context.pre_reduce_scatter_params)
         for actual, expected in zip(model.parameters(), reference.parameters()):
             torch.testing.assert_close(actual.grad.to_local(), expected.grad)

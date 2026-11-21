@@ -22,7 +22,6 @@ from torch._dynamo.eval_frame import OptimizedModule
 from hyper_parallel import DTensor
 from hyper_parallel.core.activation_memory.wrapper import SwapWrapper
 from hyper_parallel.core.dtensor.device_mesh import DeviceMesh
-from hyper_parallel.core.fully_shard.api import HSDPModule
 from hyper_parallel.core.fully_shard.utils import CPUOffloadPolicy
 from hyper_parallel.core.pipeline_parallel._stage import PipelineStageBase
 from hyper_parallel.core.pipeline_parallel.utils import _RecvInfo
@@ -134,17 +133,14 @@ class PipelineStage(PipelineStageBase):
         self._dyn_shape = dyn_shape
         self._shared_parameters = self._check_shared_parameters(shared_parameters)
         self._virtual_chunk_num = 1
-        if self._has_sharded_params:
+        if self.all_hsdp_schedulers:
             if any(isinstance(module, OptimizedModule) for module in submodule.modules()):
                 raise ValueError("HSDP pipeline stages do not support torch.compile")
             if any(isinstance(module, SwapWrapper) or "_swap_group_name" in module.__dict__
                    for module in submodule.modules()):
                 raise ValueError("HSDP pipeline stages do not support activation swap")
-            submodule.hsdp_scheduler.lazy_init()
-            if submodule.hsdp_scheduler.scheduler_ctx.root_module is not submodule:
-                raise ValueError("An HSDP parameter-management unit must belong to exactly one pipeline stage")
             stage_modules = set(submodule.modules())
-            for scheduler in submodule.hsdp_scheduler.scheduler_ctx.all_hsdp_schedulers:
+            for scheduler in self.all_hsdp_schedulers:
                 if not set(scheduler.modules).issubset(stage_modules):
                     raise ValueError("An HSDP module group cannot span pipeline stages")
                 if scheduler.comm_fusion_policy.enable_comm_fusion:

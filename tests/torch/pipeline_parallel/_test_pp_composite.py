@@ -230,6 +230,52 @@ def _assert_grad_parity(
             )
 
 
+def _assert_hsdp_loss_parity(losses, reference_loss, device, dp_mesh, fsdp_mesh, context: str) -> None:
+    """Compare the summed HSDP loss across the shard and replicate axes."""
+    local_loss = torch.zeros(1, dtype=torch.float32, device=device)
+    for sub_loss in losses:
+        activation = sub_loss[0] if isinstance(sub_loss, (list, tuple)) else sub_loss
+        local_loss += activation.sum()
+    dist.all_reduce(local_loss, op=dist.ReduceOp.SUM, group=dp_mesh.get_group())
+    dist.all_reduce(local_loss, op=dist.ReduceOp.SUM, group=fsdp_mesh.get_group())
+    global_loss = float(local_loss.item())
+    if not np.isfinite(global_loss) or not np.isfinite(reference_loss):
+        raise AssertionError(f"{context} non-finite loss (global={global_loss}, ref={reference_loss}).")
+    np.testing.assert_allclose(global_loss, reference_loss, rtol=_RTOL, atol=_ATOL, err_msg=context)
+
+
+def _assert_hsdp_weight_parity(stage_params, reference_params, fsdp_rank: int, context: str) -> None:
+    """Compare each optimizer update against the corresponding reference shard."""
+    for fqn, param in stage_params.items():
+        reference_weight = _to_numpy(reference_params[fqn])
+        shard_rows = (reference_weight.shape[0] + _FSDP_SIZE - 1) // _FSDP_SIZE
+        reference_shard = reference_weight[fsdp_rank * shard_rows:(fsdp_rank + 1) * shard_rows]
+        np.testing.assert_allclose(
+            _to_numpy(param).reshape(-1), reference_shard.reshape(-1), rtol=_RTOL, atol=_ATOL,
+            err_msg=f"{context} parameter={fqn}",
+        )
+
+
+def _check_hsdp_topology(case_name: str, world_size: int, rank: int) -> bool:
+    """Check that the worker count and model dimensions match the mesh."""
+    expected_world = _PP_SIZE * _DP_SIZE * _FSDP_SIZE
+    if world_size != expected_world:
+        if rank == 0:
+            print(f"Skip {case_name}: requires world_size={expected_world}, got {world_size}.")
+        return False
+    if _NUM_STAGES % _PP_SIZE != 0:
+        raise AssertionError(f"NUM_STAGES ({_NUM_STAGES}) must be divisible by pp_size ({_PP_SIZE}).")
+    if _D_HID % _FSDP_SIZE != 0:
+        raise AssertionError(f"D_HID ({_D_HID}) must be divisible by fsdp_size ({_FSDP_SIZE}).")
+    return True
+
+
+def _build_hsdp_reference(base_layers, device):
+    """Build independent serial layers and their parameter lookup."""
+    layers = nn.ModuleList(copy.deepcopy(layer) for layer in base_layers).to(device=device)
+    return layers, dict(layers.named_parameters())
+
+
 def _assert_pp_hsdp_vpp_matches_reference(
     case_name: str, schedule_factory=ScheduleInterleaved1F1B, *,
     module_settings=None, checkpointing=False, concurrent_overlap=False, layers_per_stage=1,
@@ -243,19 +289,8 @@ def _assert_pp_hsdp_vpp_matches_reference(
             "reshard_after_backward": True,
             "requires_gradient_sync": True,
         }
-    world_size = dist.get_world_size()
-    expected_world = _PP_SIZE * _DP_SIZE * _FSDP_SIZE
-    if world_size != expected_world:
-        if rank == 0:
-            print(
-                f"Skip {case_name}: requires world_size={expected_world} "
-                f"(pp={_PP_SIZE}, dp={_DP_SIZE}, fsdp={_FSDP_SIZE}), got {world_size}."
-            )
+    if not _check_hsdp_topology(case_name, dist.get_world_size(), rank):
         return
-    if _NUM_STAGES % _PP_SIZE != 0:
-        raise AssertionError(f"NUM_STAGES ({_NUM_STAGES}) must be divisible by pp_size ({_PP_SIZE}).")
-    if _D_HID % _FSDP_SIZE != 0:
-        raise AssertionError(f"D_HID ({_D_HID}) must be divisible by fsdp_size ({_FSDP_SIZE}).")
 
     mesh = init_device_mesh(
         device_type=device.type,
@@ -291,15 +326,12 @@ def _assert_pp_hsdp_vpp_matches_reference(
     schedule = schedule_factory(pipeline_stages, _NUM_MICROBATCHES)
     if concurrent_overlap:
         register_hsdp_overlap(schedule, pipeline_stages, device)
-    stage_optimizers = [optim.SGD(stage.parameters(), lr=_LR) for stage in stages]
+    # Keep the SGD step size independent of the number of summed microbatches.
+    learning_rate = _LR / total_microbatches
+    stage_optimizers = [optim.SGD(stage.parameters(), lr=learning_rate) for stage in stages]
 
-    ref_layers = nn.ModuleList(copy.deepcopy(layer) for layer in base_layers).to(device=device)
-    ref_param_map = {
-        f"{layer_idx}.{sub_name}": param
-        for layer_idx, layer in enumerate(ref_layers)
-        for sub_name, param in layer.named_parameters()
-    }
-    ref_optimizer = optim.SGD(ref_layers.parameters(), lr=_LR)
+    ref_layers, ref_param_map = _build_hsdp_reference(base_layers, device)
+    ref_optimizer = optim.SGD(ref_layers.parameters(), lr=learning_rate)
 
     for step in range(_STEPS):
         for optimizer in stage_optimizers:
@@ -312,25 +344,9 @@ def _assert_pp_hsdp_vpp_matches_reference(
         losses = schedule.run(local_inputs) if pp_rank == 0 else schedule.run()
         ref_total_loss = _run_reference_step(ref_layers, global_inputs, total_microbatches)
 
+        context = f"{case_name}: rank={rank}, step={step}"
         if is_last_stage:
-            local_loss = torch.zeros(1, dtype=torch.float32, device=device)
-            for sub_loss in losses:
-                activation = sub_loss[0] if isinstance(sub_loss, (list, tuple)) else sub_loss
-                local_loss += activation.sum()
-            # Recover the global summed loss over the full HSDP data-parallel group.
-            dist.all_reduce(local_loss, op=dist.ReduceOp.SUM, group=dp_mesh.get_group())
-            dist.all_reduce(local_loss, op=dist.ReduceOp.SUM, group=fsdp_mesh.get_group())
-            global_loss = float(local_loss.item())
-            if not np.isfinite(global_loss) or not np.isfinite(ref_total_loss):
-                raise AssertionError(
-                    f"{case_name}: rank {rank} step {step} non-finite loss "
-                    f"(global={global_loss}, ref={ref_total_loss})."
-                )
-            if not np.allclose(global_loss, ref_total_loss, rtol=_RTOL, atol=_ATOL):
-                raise AssertionError(
-                    f"{case_name}: rank {rank} step {step} loss mismatch "
-                    f"global={global_loss:.6f} != ref={ref_total_loss:.6f}."
-                )
+            _assert_hsdp_loss_parity(losses, ref_total_loss, device, dp_mesh, fsdp_mesh, context)
 
         _assert_grad_parity(
             case_name, rank, step, fsdp_rank, _FSDP_SIZE, stage_param_map, ref_param_map
@@ -340,14 +356,7 @@ def _assert_pp_hsdp_vpp_matches_reference(
             for optimizer in stage_optimizers:
                 optimizer.step()
             ref_optimizer.step()
-        for fqn, param in stage_param_map.items():
-            reference_weight = _to_numpy(ref_param_map[fqn])
-            shard_rows = (reference_weight.shape[0] + _FSDP_SIZE - 1) // _FSDP_SIZE
-            reference_shard = reference_weight[fsdp_rank * shard_rows:(fsdp_rank + 1) * shard_rows]
-            np.testing.assert_allclose(
-                _to_numpy(param).reshape(-1), reference_shard.reshape(-1), rtol=_RTOL, atol=_ATOL,
-                err_msg=f"{case_name}: rank={rank}, step={step}, parameter={fqn}",
-            )
+        _assert_hsdp_weight_parity(stage_param_map, ref_param_map, fsdp_rank, context)
 
     if rank == 0:
         print(
@@ -385,7 +394,7 @@ def test_pp_hsdp_vpp_dxdw_split_matches_reference() -> None:
 
 
 def test_pp_hsdp_policies_checkpoint_overlap_matches_reference() -> None:
-    """Exercise all residency/sync combinations with real concurrent full and split backward."""
+    """Exercise all residency and sync policies with checkpointing and BF overlap."""
     for reshard_after_forward, reshard_after_backward, gradient_sync in (
         (False, False, False), (False, False, True), (True, True, True), (True, True, False),
     ):
