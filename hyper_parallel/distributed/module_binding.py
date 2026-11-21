@@ -26,9 +26,10 @@ from typing import Any
 from torch import nn
 
 from hyper_parallel.components.modules.module_family import _same_mesh, get_family_build_info
-from hyper_parallel.core.dtensor.placement_types import Shard
+from hyper_parallel.core.dtensor.placement_types import Replicate, Shard
 from hyper_parallel.distributed.context_parallel.cp_context import CPContext
 from hyper_parallel.distributed.expert_parallel.ep_context import EPContext
+from hyper_parallel.distributed.expert_parallel.moonep_context import MoonEPContext
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,7 @@ class ParallelBinding:
 
     mesh_binding: MeshBinding
     cp_context: CPContext | None = None
-    ep_context: EPContext | None = None
+    ep_context: EPContext | MoonEPContext | None = None
 
 
 def validate_parallel_module(module: nn.Module, parallel: ParallelModuleSpec, sharding: Any, context: Any) -> None:
@@ -122,14 +123,27 @@ def validate_parallel_module(module: nn.Module, parallel: ParallelModuleSpec, sh
         inspect.signature(module.bind_parallel).bind(None)
     if getattr(sharding, "_ep_stack", None):
         raise ValueError("explicit expert stages cannot inherit legacy whole-MoE stacking")
-    if sharding.in_src != sharding.in_dst:
-        raise ValueError("explicit stage modules must receive their declared computation layout directly")
-    if sharding.out_dst is not None and sharding.out_src != sharding.out_dst:
-        raise ValueError("explicit stage modules must restore their declared output layout themselves")
+    _validate_parallel_ports(sharding)
     if parallel.binding_kind == "ep":
         _validate_expert_ownership(module, parallel, sharding, context)
     if parallel.validate is not None:
         parallel.validate(module=module, sharding=sharding, context=context)
+
+
+def _validate_parallel_ports(sharding):
+    """Allow original TP boundaries while explicit CP/EP restores its own ownership."""
+    # CP/EP own their internal exchanges; the original boundary executor may
+    # still redistribute TP ports around the member's local computation.
+    for source, destination in ((sharding.in_src, sharding.in_dst), (sharding.out_src, sharding.out_dst)):
+        if source == destination or destination is None:
+            continue
+        if not sharding.is_boundary or source is None or set(source) != set(destination):
+            raise ValueError("explicit stage modules require complete TP boundary ports")
+        for port, begin in source.items():
+            end = destination[port]
+            if any(begin.get(axis, Replicate()) != end.get(axis, Replicate())
+                   for axis in (set(begin) | set(end)) - {"tp"}):
+                raise ValueError("explicit stages must restore non-TP ownership themselves")
 
 
 def _validate_expert_ownership(module, parallel, sharding, context):
@@ -146,6 +160,15 @@ def _validate_expert_ownership(module, parallel, sharding, context):
         parameter = module.get_parameter(name)
         if placement.dim != 0 or parameter.shape[0] != experts:
             raise ValueError("EPContext supports balanced contiguous expert Shard(0) ownership")
+
+
+def _build_ep_context(mesh_binding: MeshBinding, parallel: ParallelModuleSpec) -> EPContext | MoonEPContext:
+    """Choose the declared EP runtime while borrowing the existing expert mesh."""
+    moonep = parallel.options.get("moonep", False)
+    if not isinstance(moonep, bool):
+        raise ValueError("the moonep runtime option must be bool")
+    constructor = MoonEPContext if moonep else EPContext
+    return constructor(mesh_binding.axis_mesh("ep"), num_experts=parallel.options["num_experts"])
 
 
 def bind_parallel_modules(model: nn.Module, plan: Any, mesh_context: Any) -> None:
@@ -171,8 +194,7 @@ def bind_parallel_modules(model: nn.Module, plan: Any, mesh_context: Any) -> Non
                 raise ValueError(f"module {fqn!r} already has a communication owner")
             continue
         cp = CPContext(mesh_binding.axis_mesh("cp")) if parallel.binding_kind == "cp" else None
-        ep = (EPContext(mesh_binding.axis_mesh("ep"), num_experts=parallel.options["num_experts"])
-              if parallel.binding_kind == "ep" else None)
+        ep = _build_ep_context(mesh_binding, parallel) if parallel.binding_kind == "ep" else None
         prepared.append((module, ParallelBinding(mesh_binding, cp, ep)))
     for module, binding in prepared:
         module.bind_parallel(binding)

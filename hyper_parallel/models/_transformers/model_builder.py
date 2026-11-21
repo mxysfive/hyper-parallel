@@ -21,7 +21,6 @@ plan/apply sharding -> activation checkpoint/swap -> FSDP2 ->
 materialize/load -> compile. This module consumes only normalized
 AutoModels objects and never imports trainer config (05 §15.2.6).
 """
-# pylint: disable=forbidden-backend-import
 
 import fnmatch
 import logging
@@ -356,7 +355,9 @@ def _apply_model_method_replacements(model: nn.Module, distributed_setup: Any, l
         return
     context = getattr(model, "_hp_module_build_context", None)
     if context is None:
-        context = build_module_context(distributed_setup, low_precision_config=low_precision_config)
+        context = build_module_context(
+            distributed_setup, low_precision_config=low_precision_config, config=getattr(model, "config", None),
+        )
     context = {**context, "mesh_context": getattr(distributed_setup, "mesh_context", None)}
     apply_method_replacements(model, rules, context=context)
 
@@ -594,6 +595,7 @@ def _maybe_apply_module_replacements(
         spec = resolve_effective_model_spec(getattr(model, "config", None))
         context = build_module_context(
             distributed_setup, low_precision_config=low_precision_config, model_spec=spec,
+            config=getattr(model, "config", None),
         )
         attach_build_context(model, context)
     return prepare_model_components(model, context, capture_checkpoint_metadata=load_base_model)

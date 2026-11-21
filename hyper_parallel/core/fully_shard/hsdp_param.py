@@ -428,6 +428,11 @@ class HSDPParamV2:
             self._grad = None
             self.reduce_scatter_comm_ctx.reduce_scatter_handle = None
 
+    def reduce_scatter_output(self) -> Optional[torch.Tensor]:
+        """Return the sharded gradient after waiting for its reduction."""
+        self.wait_reduce_scatter()
+        return self.reduce_scatter_comm_ctx.reduce_scatter_output
+
     def clear_reduce_scatter_output(self) -> None:
         """Clear the reduce-scatter output tensor to free memory."""
         if self.reduce_scatter_comm_ctx.reduce_scatter_handle is not None:

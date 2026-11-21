@@ -15,6 +15,7 @@
 """HSDP scheduler"""
 import functools
 import inspect
+from collections import deque
 from typing import Any, Callable, List, Mapping, Optional, ParamSpec, Tuple, TypeVar, Union
 
 import torch
@@ -89,11 +90,13 @@ class HSDPSchedulerContext:
         self.all_hsdp_schedulers = []
         # Parameter FQNs are initialized once after all schedulers share this context.
         self._param_fqn_initialized = False
-        # Backward pipeline queues shared only by schedulers in this module tree.
-        self.pre_reduce_scatter_params = []
+        # Each queue entry belongs to one non-fused unit, including empty units.
+        # Configuration and queues are shared by the entire module tree.
+        self.reduce_interval: int = 1
+        self.pre_reduce_scatter_params = deque()
         self.pre_all_reduce_params = []
         self.pre_direct_all_reduce_grads = []
-        self.pre_all_reduce_groups = []
+        self.pre_all_reduce_groups = deque()
         self.pending_all_reduce_groups = []
         self.param_group_comm_ctx = ParamGroupCommCtx()
 
@@ -664,12 +667,13 @@ class HSDPSchedulerV2:
 
     def flush_reduce_scatter(self) -> None:
         """Consume this tree's old shards and submit their replica reductions."""
-        last_all_reduce_groups = self.hsdp_state._wait_prev_reduce_scatter()
-        self.hsdp_state._wait_prev_reduce_scatter_without_all_reduce()
-        self.hsdp_state._issue_prev_fused_all_reduce(last_all_reduce_groups)
+        while self.scheduler_ctx.pre_reduce_scatter_params:
+            last_all_reduce_groups = self.hsdp_state._wait_prev_reduce_scatter()
+            self.hsdp_state._wait_prev_reduce_scatter_without_all_reduce()
+            self.hsdp_state._issue_prev_fused_all_reduce(last_all_reduce_groups)
 
     def wait_all_reduce(self) -> None:
-        """Wait for replica reductions without launching new ReduceScatter work."""
+        """Wait for replica reductions already submitted in this tree."""
         self.hsdp_state.wait_and_split_all_reduce_work_groups()
 
     def _apply_reduced_gradients(self) -> None:
